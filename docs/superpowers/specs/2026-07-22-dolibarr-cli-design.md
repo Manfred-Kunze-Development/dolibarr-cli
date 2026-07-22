@@ -14,7 +14,8 @@ modules customers touch daily.
 
 - Reimplementing Dolibarr business logic. The CLI is a transport with good ergonomics.
 - Offline operation. Every command except `config`/`context` requires a reachable instance.
-- Supporting a fixed Dolibarr version. The command tree is derived per instance.
+- Hardcoding one Dolibarr version's surface. The command tree is derived per instance — though
+  only three majors are *supported* at a time (see [Local instances](#local-instances)).
 
 ## Decisions
 
@@ -23,7 +24,7 @@ modules customers touch daily.
 | Audience | Polished core + complete tail | Brief demands completeness; daily users need ergonomics. |
 | Instance drift | Derive command tree from the live spec | Module set and version vary per customer; a pinned tree lies. |
 | Core/tail assembly | Manifest registry with overrides | One registration path; real Commander commands so `--help` enumerates. |
-| v1 scope | Engine only; craft later | All 440 endpoints reachable in one slice; craft based on real usage. |
+| v1 scope | Engine only; craft later | Every endpoint the instance exposes reachable in one slice; craft based on real usage. |
 
 ## Why the spec cannot be trusted for payloads
 
@@ -38,9 +39,11 @@ instance's spec (440 operations, 38 modules):
   `createStockmovementsModel`, `tasksAddTimeSpentModel`, the `*ValidateModel`/`*CloseModel`
   family, …).
 
-What *is* trustworthy: paths, methods, `operationId`, tags, and path/query parameters
-(including genuinely useful descriptions). That is exactly enough to build a command tree,
-and not enough to type payloads — which is why the tail is untyped by construction.
+What *is* trustworthy: paths, methods, tags, and path/query parameters (including genuinely
+useful descriptions). `operationId` is always present and is a good basis for naming, but is
+**not unique** and must not be used as an identity key. Together this is exactly enough to build
+a command tree, and not enough to type payloads — which is why the tail is untyped by
+construction.
 
 Payload ground truth is the Dolibarr PHP source (`htdocs/**/class/api_<module>.class.php`),
 not the spec. See [Required create fields](#required-create-fields).
@@ -53,8 +56,9 @@ Three layers, resolved at startup:
    work without a manifest.
 2. **Generated commands** — one group per module, one command per operation, built from the
    cached manifest for the active context.
-3. **Crafted commands** (future slices) — hand-written modules declare the `operationId`s they
-   claim and replace the generated commands for those.
+3. **Crafted commands** (future slices) — hand-written modules declare the `method + path` pairs
+   they claim and replace the generated commands for those. Not `operationId`: it is not unique
+   (see [Command-name derivation](#command-name-derivation)).
 
 With no manifest, only static commands register and `--help` directs the user to run
 `dolibarr sync`. A fresh install must never look broken.
