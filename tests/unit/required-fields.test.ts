@@ -18,3 +18,21 @@ describe("required-fields.json", () => {
     }
   });
 });
+
+describe("required-fields.json is generator-canonical", () => {
+  it("is byte-identical to what extract-fields.mjs produces", () => {
+    // Keeping the committed file in the generator's exact output format makes
+    // `npm run extract:fields && git diff --exit-code` a usable drift check
+    // against a new Dolibarr major. Hand-formatting it would make every
+    // regeneration show a cosmetic diff and hide real changes in the noise.
+    const raw = readFileSync("src/data/required-fields.json", "utf8");
+    const table = JSON.parse(raw);
+    const canonical =
+      JSON.stringify(
+        Object.fromEntries(Object.entries(table).sort(([a], [b]) => a.localeCompare(b))),
+        null,
+        2,
+      ) + "\n";
+    expect(raw.split("\r\n").join("\n")).toBe(canonical);
+  });
+});
