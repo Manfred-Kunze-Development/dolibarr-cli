@@ -1,0 +1,99 @@
+stages:
+  - test
+  - contract
+  - build
+
+default:
+  tags:
+    - docker
+  image: node:22
+
+variables:
+  # Matches the key seeded by docker/init/ in compose.yml. Dev-only.
+  DOLIBARR_API_KEY: dolibarrclidevkey000000000000000
+
+# Unit tests are version-independent: they run against the two committed API
+# description fixtures, so there is nothing to gain from a matrix here.
+test:unit:
+  stage: test
+  script:
+    - npm ci
+    - npm run typecheck
+    - npm run test:unit
+  rules:
+    - when: always
+
+# Contract tests need a real Dolibarr, so they bring the compose stack up via
+# docker-in-docker. This is the job that enforces the three-major support window
+# (previous / current / next) — see the Version Support Policy in CLAUDE.md.
+#
+# Kept off the default path because a cold Dolibarr takes ~2 minutes to become
+# healthy per version, and `next` tracks a moving beta that can break through no
+# fault of ours.
+.contract-template: &contract
+  stage: contract
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: 1
+    DOCKER_CERT_PATH: "/certs/client"
+  before_script:
+    - apk add --no-cache nodejs npm
+    - npm ci
+  script:
+    - docker compose --profile $DOLI_PROFILE up -d
+    # compose.yml's healthcheck probes the API with the seeded key, so "healthy"
+    # means the API genuinely authenticates — not merely that Apache is up.
+    - |
+      for i in $(seq 1 60); do
+        status=$(docker inspect --format='{{.State.Health.Status}}' dolibarr-cli-dev-dolibarr-$DOLI_PROFILE-1 2>/dev/null || echo starting)
+        echo "[$i] $DOLI_PROFILE health=$status"
+        [ "$status" = "healthy" ] && break
+        [ "$status" = "unhealthy" ] && exit 1
+        sleep 10
+      done
+    - npm run test:contract
+  after_script:
+    - docker compose --profile $DOLI_PROFILE down -v
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $RUN_CONTRACT_TESTS == "true"
+    - when: manual
+      allow_failure: true
+
+contract:previous:
+  <<: *contract
+  variables:
+    DOLI_PROFILE: previous
+    DOLIBARR_BASE_URL: http://docker:8022/api/index.php
+
+contract:current:
+  <<: *contract
+  variables:
+    DOLI_PROFILE: current
+    DOLIBARR_BASE_URL: http://docker:8023/api/index.php
+
+contract:next:
+  <<: *contract
+  variables:
+    DOLI_PROFILE: next
+    DOLIBARR_BASE_URL: http://docker:8024/api/index.php
+  # `next` is a moving beta; a failure here is a signal, not a broken build.
+  allow_failure: true
+
+build:
+  stage: build
+  script:
+    - npm ci
+    - npm run build
+    # The CLI must start with no config and no manifest — a fresh install shows
+    # static commands only, and must not crash looking for a manifest.
+    - node dist/cli.js --help
+    - node dist/cli.js --version
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 week
