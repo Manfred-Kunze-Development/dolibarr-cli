@@ -4,7 +4,10 @@
   "description": "CLI for the Dolibarr ERP/CRM REST API",
   "type": "module",
   "main": "dist/index.js",
-  "bin": { "dolibarr": "dist/cli.js", "doli": "dist/cli.js" },
+  "bin": {
+    "dolibarr": "dist/cli.js",
+    "doli": "dist/cli.js"
+  },
   "scripts": {
     "build": "tsc && node scripts/copy-assets.mjs",
     "dev": "tsc --watch",
@@ -28,6 +31,30 @@
     "typescript": "^5.9.3",
     "vitest": "^2.1.8"
   },
-  "engines": { "node": ">=18.20.8" },
-  "files": ["dist/**/*.js", "dist/**/*.d.ts", "dist/data/*.json"]
+  "engines": {
+    "node": ">=18.20.8"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/data/*.json"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "homepage": "https://gitlab.com/manfred-kunze-dev/customers/manfred-kunze/dolibarr-cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitlab.com/manfred-kunze-dev/customers/manfred-kunze/dolibarr-cli.git"
+  },
+  "keywords": [
+    "dolibarr",
+    "erp",
+    "crm",
+    "cli",
+    "rest",
+    "api"
+  ]
 }

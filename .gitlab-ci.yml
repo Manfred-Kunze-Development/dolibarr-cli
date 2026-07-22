@@ -1,12 +1,19 @@
+include:
+  - project: 'veith.dev/devops/gitlab-pipelines'
+    ref: v3.4.0
+    file:
+      - 'common/ChildPipeline.gitlab-ci.yml'
+
+# TODO REMOVE WHEN SUBSCRIPTION IS ACTIVATED
+default:
+  tags:
+    - docker
+
 stages:
   - test
   - contract
   - build
-
-default:
-  tags:
-    - docker
-  image: node:22
+  - deploy
 
 variables:
   # Matches the key seeded by docker/init/ in compose.yml. Dev-only.
@@ -16,6 +23,7 @@ variables:
 # description fixtures, so there is nothing to gain from a matrix here.
 test:unit:
   stage: test
+  image: node:22-alpine
   script:
     - npm ci
     - npm run typecheck
@@ -88,8 +96,9 @@ contract:next:
   # `next` is a moving beta; a failure here is a signal, not a broken build.
   allow_failure: true
 
-build:
+build:npm:
   stage: build
+  image: node:22-alpine
   script:
     - npm ci
     - npm run build
@@ -100,4 +109,55 @@ build:
   artifacts:
     paths:
       - dist/
-    expire_in: 1 week
+  rules:
+    - when: always
+
+publish:gitlab:
+  stage: deploy
+  image: node:22-alpine
+  needs:
+    - build:npm
+  script:
+    - npm version "${VERSION}" --no-git-tag-version --allow-same-version
+    - |
+      {
+        echo "@${CI_PROJECT_ROOT_NAMESPACE}:registry=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
+        echo "${CI_API_V4_URL#http*:}/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=\${CI_JOB_TOKEN}"
+      } > .npmrc
+    - echo "Publishing ${VERSION} to GitLab npm registry"
+    - NPM_PACKAGE_NAME=$(node -p "require('./package.json').name")
+    - NPM_PACKAGE_VERSION=$(node -p "require('./package.json').version")
+    - |
+      if [[ "$(npm view ${NPM_PACKAGE_NAME} versions 2>/dev/null)" != *"'${NPM_PACKAGE_VERSION}'"* ]]; then
+        npm publish
+        echo "Successfully published ${NPM_PACKAGE_NAME}@${NPM_PACKAGE_VERSION}"
+      else
+        echo "Version ${NPM_PACKAGE_VERSION} already published, skipping."
+      fi
+  rules:
+    - if: $IS_RELEASE == "true"
+
+publish:npmjs:
+  stage: deploy
+  image: node:22-alpine
+  needs:
+    - build:npm
+  script:
+    - npm version "${VERSION}" --no-git-tag-version --allow-same-version
+    - echo "//registry.npmjs.org/:_authToken=\${NPM_TOKEN}" > .npmrc
+    - NPM_PACKAGE_NAME=$(node -p "require('./package.json').name")
+    - NPM_PACKAGE_VERSION=$(node -p "require('./package.json').version")
+    - |
+      EXISTING=$(npm view "${NPM_PACKAGE_NAME}@${NPM_PACKAGE_VERSION}" version --registry https://registry.npmjs.org 2>/dev/null || true)
+      if [ -n "${EXISTING}" ]; then
+        echo "Version ${NPM_PACKAGE_VERSION} already published to npmjs.org, skipping."
+      elif echo "${NPM_PACKAGE_VERSION}" | grep -q '-'; then
+        NPM_TAG=$(echo "${NPM_PACKAGE_VERSION}" | sed 's/.*-\([a-zA-Z]*\).*/\1/')
+        echo "Publishing ${NPM_PACKAGE_NAME}@${NPM_PACKAGE_VERSION} to npmjs.org with tag ${NPM_TAG}"
+        npm publish --access public --tag "${NPM_TAG}"
+      else
+        echo "Publishing ${NPM_PACKAGE_NAME}@${NPM_PACKAGE_VERSION} to npmjs.org"
+        npm publish --access public
+      fi
+  rules:
+    - if: $IS_RELEASE == "true"
