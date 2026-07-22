@@ -11,12 +11,15 @@ export function makeModulesCommand(): Command {
     .action((_opts, command: Command) => {
       const manifest = loadManifest();
       if (!manifest) {
+        // Exit non-zero in BOTH formats: a script doing
+        // `dolibarr modules --json || handle_unsynced` must be able to branch on
+        // status, and every other command signals failure regardless of format.
+        process.exitCode = 1;
         if (isJsonOutput(command)) {
-          console.log(JSON.stringify({ synced: false, modules: [] }));
+          console.log(JSON.stringify({ synced: false, modules: [] }, null, 2));
         } else {
           console.error(chalk.yellow("No manifest for this context."));
           console.error(chalk.dim('Run "dolibarr sync" first.'));
-          process.exitCode = 1;
         }
         return;
       }
