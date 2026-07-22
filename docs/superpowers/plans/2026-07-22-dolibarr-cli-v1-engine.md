@@ -666,11 +666,36 @@ interface Store {
   contexts: Record<string, ContextEntry>;
 }
 
-export const store = new Conf<Store>({
-  projectName: "dolibarr",
-  projectSuffix: "",
-  defaults: { activeContext: "default", contexts: {} },
-});
+let cachedStore: Conf<Store> | undefined;
+
+/**
+ * The config store, constructed on first use.
+ *
+ * Deliberately lazy: `conf`'s constructor eagerly creates the config file on
+ * disk, so building this at module scope means merely *importing* this module
+ * writes to the user's real profile — polluting their config on every test run,
+ * and failing wherever HOME is read-only.
+ *
+ * DOLIBARR_CONFIG_DIR redirects the store elsewhere; the test suite sets it so
+ * tests can exercise context handling without touching the real profile.
+ */
+export function getStore(): Conf<Store> {
+  if (!cachedStore) {
+    const override = process.env.DOLIBARR_CONFIG_DIR;
+    cachedStore = new Conf<Store>({
+      projectName: "dolibarr",
+      projectSuffix: "",
+      ...(override ? { cwd: override } : {}),
+      defaults: { activeContext: "default", contexts: {} },
+    });
+  }
+  return cachedStore;
+}
+
+/** Test seam: drop the cached store so a new DOLIBARR_CONFIG_DIR takes effect. */
+export function resetStoreForTesting(): void {
+  cachedStore = undefined;
+}
 
 const CONTEXT_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -681,11 +706,11 @@ export function validateContextName(name: string): void {
 }
 
 export function getActiveContextName(): string {
-  return store.get("activeContext") ?? "default";
+  return getStore().get("activeContext") ?? "default";
 }
 
 export function getAllContexts(): Record<string, ContextEntry> {
-  return store.get("contexts") ?? {};
+  return getStore().get("contexts") ?? {};
 }
 
 export function getActiveContext(): ContextEntry | undefined {
@@ -694,16 +719,16 @@ export function getActiveContext(): ContextEntry | undefined {
 
 export function setContext(name: string, entry: ContextEntry): void {
   validateContextName(name);
-  store.set("contexts", { ...getAllContexts(), [name]: entry });
+  getStore().set("contexts", { ...getAllContexts(), [name]: entry });
 }
 
 export function deleteContext(name: string): void {
   const contexts = getAllContexts();
   if (!contexts[name]) throw new Error(`Context "${name}" does not exist.`);
   delete contexts[name];
-  store.set("contexts", contexts);
+  getStore().set("contexts", contexts);
   if (getActiveContextName() === name) {
-    store.set("activeContext", Object.keys(contexts)[0] ?? "default");
+    getStore().set("activeContext", Object.keys(contexts)[0] ?? "default");
   }
 }
 
@@ -713,13 +738,13 @@ export function setActiveContext(name: string): void {
       `Context "${name}" does not exist. Available: ${Object.keys(getAllContexts()).join(", ") || "(none)"}`,
     );
   }
-  store.set("activeContext", name);
+  getStore().set("activeContext", name);
 }
 
 /** Manifests live beside the config store, one file per context. */
 export function manifestPathFor(contextName: string): string {
   validateContextName(contextName);
-  return join(store.path, "..", "manifests", `${contextName}.json`);
+  return join(getStore().path, "..", "manifests", `${contextName}.json`);
 }
 
 export interface ResolveInputs {
@@ -2246,7 +2271,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { createInterface } from "node:readline/promises";
 import {
-  store, setContext, setActiveContext, getActiveContextName, getActiveContext,
+  getStore, setContext, setActiveContext, getActiveContextName, getActiveContext,
   getAllContexts, deleteContext, resolveConfig, isJsonOutput,
 } from "../lib/config.js";
 import { request } from "../lib/client.js";
@@ -2291,7 +2316,7 @@ export function makeAuthCommand(): Command {
       setContext(name, { apiKey, baseUrl });
       setActiveContext(name);
       console.log(chalk.green(`Credentials saved for context "${name}".`));
-      console.log(chalk.dim(`Config: ${store.path}`));
+      console.log(chalk.dim(`Config: ${getStore().path}`));
       console.log(chalk.dim('Run "dolibarr sync" to build the command tree.'));
     });
 
@@ -2329,7 +2354,7 @@ export function makeAuthCommand(): Command {
     .action(() => {
       const name = getActiveContextName();
       if (Object.keys(getAllContexts()).length <= 1) {
-        store.set("contexts", {});
+        getStore().set("contexts", {});
       } else {
         deleteContext(name);
       }
@@ -2417,7 +2442,7 @@ export function makeContextCommand(): Command {
 // src/commands/config.ts
 import { Command } from "commander";
 import chalk from "chalk";
-import { store, getActiveContextName, isJsonOutput, manifestPathFor } from "../lib/config.js";
+import { getStore, getActiveContextName, isJsonOutput, manifestPathFor } from "../lib/config.js";
 
 export function makeConfigCommand(): Command {
   const cmd = new Command("config").description("Inspect CLI configuration");
@@ -2427,7 +2452,7 @@ export function makeConfigCommand(): Command {
     .description("Show where configuration and manifests are stored")
     .action((_opts, command: Command) => {
       const payload = {
-        config: store.path,
+        config: getStore().path,
         manifest: manifestPathFor(getActiveContextName()),
         activeContext: getActiveContextName(),
       };

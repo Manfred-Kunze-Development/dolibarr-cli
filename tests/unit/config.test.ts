@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveFrom, manifestPathFor, validateContextName } from "../../src/lib/config.js";
+import { resolveFrom, manifestPathFor, validateContextName, getStore } from "../../src/lib/config.js";
 
 describe("validateContextName", () => {
   it("accepts safe names", () => expect(() => validateContextName("acme-1_x")).not.toThrow());
@@ -40,5 +40,14 @@ describe("manifestPathFor", () => {
   it("is namespaced per context", () => {
     expect(manifestPathFor("acme")).toMatch(/acme\.json$/);
     expect(manifestPathFor("acme")).not.toBe(manifestPathFor("other"));
+  });
+});
+
+describe("config store location", () => {
+  it("honours DOLIBARR_CONFIG_DIR so tests never touch the real profile", () => {
+    // conf's constructor eagerly creates its file on disk. Without an override
+    // (and without lazy construction) merely importing this module wrote to the
+    // user's real config directory on every test run.
+    expect(getStore().path.split("\\").join("/")).toContain("dolibarr-cli-test-config");
   });
 });
