@@ -85,3 +85,46 @@ describe("buildBody — data integrity and safety", () => {
       .toThrow(/--data.*could not be read|could not read/i);
   });
 });
+
+describe("buildBody — array and extrafield integrity", () => {
+  it("edits an element inside an array without destroying the rest", () => {
+    // Found in final review. Replacing the array with a fresh object turned
+    // {"lines":[{desc,qty},{desc,qty}]} into {"lines":{"0":{"qty":9}}} — both
+    // descriptions and the second line silently deleted on the way to a live
+    // ERP. The README teaches exactly this --data-as-template pattern.
+    const body = buildBody({
+      data: '{"socid":1,"lines":[{"desc":"line one","qty":2},{"desc":"line two","qty":3}]}',
+      set: ["lines.0.qty=9"],
+    });
+    expect(body).toEqual({
+      socid: 1,
+      lines: [
+        { desc: "line one", qty: 9 },
+        { desc: "line two", qty: 3 },
+      ],
+    });
+  });
+
+  it("refuses a non-numeric key into an array rather than dropping it", () => {
+    expect(() =>
+      buildBody({ data: '{"lines":[{"qty":1}]}', set: ["lines.total=5"] }),
+    ).toThrow(/array/i);
+  });
+
+  it("sets an extrafield even when --data carries an empty array_options", () => {
+    // Dolibarr returns "array_options": [] on every record, so dump-edit-resend
+    // hit this every time: the extrafield was written onto an array and dropped
+    // by JSON.stringify.
+    expect(buildBody({ data: '{"array_options":[]}', extrafield: ["colour=red"] }))
+      .toEqual({ array_options: { options_colour: "red" } });
+  });
+
+  it("merges into an existing array_options object", () => {
+    expect(buildBody({ data: '{"array_options":{"options_a":"1"}}', extrafield: ["b=2"] }))
+      .toEqual({ array_options: { options_a: "1", options_b: "2" } });
+  });
+
+  it("rejects a second --data instead of silently taking the last", () => {
+    expect(() => buildBody({ data: ['{"a":1}', '{"b":2}'] as unknown as string })).toThrow();
+  });
+});

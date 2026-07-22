@@ -119,3 +119,38 @@ describe("buildManifest — spec robustness", () => {
     expect(op.command).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
   });
 });
+
+describe("buildManifest — path parameter order", () => {
+  it("orders path params by their appearance in the URL, not the spec array", () => {
+    // Five live endpoints declare them in a different order than the path, so
+    // positional CLI arguments landed swapped — silently, for two string args.
+    const spec = {
+      paths: {
+        "/setup/extrafields/{elementtype}/{attrname}": {
+          delete: {
+            tags: ["setup"],
+            operationId: "deleteExtrafields",
+            parameters: [
+              { name: "attrname", in: "path", type: "string" },
+              { name: "elementtype", in: "path", type: "string" },
+            ],
+          },
+        },
+      },
+    };
+    const op = buildManifest(spec, { fetchedAt: "x" }).modules.setup.operations[0];
+    expect(op.pathParams.map((p) => p.name)).toEqual(["elementtype", "attrname"]);
+  });
+
+  it("keeps every {placeholder} in the live fixtures represented, in order", () => {
+    for (const fixture of [reference, live23]) {
+      const m = buildManifest(fixture, { fetchedAt: "x" });
+      for (const mod of Object.values(m.modules)) {
+        for (const op of mod.operations) {
+          const inPath = [...op.path.matchAll(/\{([^}]+)\}/g)].map((x) => x[1]);
+          expect(op.pathParams.map((p) => p.name).slice(0, inPath.length)).toEqual(inPath);
+        }
+      }
+    }
+  });
+});

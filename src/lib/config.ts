@@ -140,6 +140,13 @@ function readLocalFile(): Partial<ContextEntry> {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch {
+    // Silently ignoring this sent commands to the active context's instance
+    // instead. The whole point of a directory-scoped dotfile is "in here, talk
+    // to THIS customer", so losing it quietly redirects writes.
+    process.stderr.write(
+      `[warning] Ignoring ${path}: it is not valid JSON. Falling back to the active context.
+`,
+    );
     return {};
   }
 }
@@ -158,6 +165,23 @@ export function resolveConfig(command: Command): ResolvedConfig {
     local: readLocalFile(),
     context: getActiveContext(),
   });
+}
+
+/**
+ * Resolve --timeout to milliseconds.
+ *
+ * Validated rather than passed through Number(): "abc" produced a NaN that also
+ * defeated the `?? DEFAULT` fallback downstream, and "0"/"-5" are truthy
+ * strings that aborted every request immediately.
+ */
+export function timeoutMsFrom(command: Command): number | undefined {
+  const raw = rootOf(command).opts().timeout;
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`--timeout must be a positive number of seconds (got "${raw}").`);
+  }
+  return seconds * 1000;
 }
 
 export function isJsonOutput(command: Command): boolean {

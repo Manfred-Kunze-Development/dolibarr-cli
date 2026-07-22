@@ -1,7 +1,8 @@
 // src/registry.ts
 import { Command, Option } from "commander";
 import type { Manifest, OperationSpec } from "./manifest.js";
-import { resolveConfig, rootOf, isJsonOutput } from "./lib/config.js";
+import { sanitizeCommand } from "./naming.js";
+import { resolveConfig, rootOf, isJsonOutput, timeoutMsFrom } from "./lib/config.js";
 import { request } from "./lib/client.js";
 import { buildBody, checkRequired } from "./lib/body.js";
 import { formatResult } from "./lib/output.js";
@@ -34,6 +35,22 @@ export function flagNameFor(paramName: string): string {
 /** Commander camelCases on hyphens only. */
 function optionKeyFor(flagName: string): string {
   return flagName.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+}
+
+/**
+ * True for the module's own create endpoint — POST to a single-segment path
+ * with no path parameters, e.g. POST /thirdparties.
+ *
+ * Dolibarr's `static $FIELDS` lists what `_validate()` demands when creating
+ * the entity itself. Sub-resource and action POSTs (POST /invoices/{id}/lines,
+ * POST /invoices/{id}/settopaid) take entirely different payloads.
+ */
+export function isRootCreate(op: OperationSpec): boolean {
+  return (
+    op.method === "post" &&
+    op.pathParams.length === 0 &&
+    op.path.split("/").filter(Boolean).length === 1
+  );
 }
 
 function addQueryOptions(cmd: Command, op: OperationSpec): void {
@@ -100,10 +117,13 @@ function buildOperationCommand(
           set: opts.set as string[] | undefined,
           extrafield: opts.extrafield as string[] | undefined,
         });
-        if (op.method === "post") checkRequired(module, body, REQUIRED);
+        // Only the module's root create takes the entity's mandatory fields.
+        // Applying this to every POST blocked 61 endpoints on a live instance —
+        // validating an invoice, adding a line, recording a payment — and told
+        // the user to inject a field that does not belong in those payloads.
+        if (isRootCreate(op)) checkRequired(module, body, REQUIRED);
       }
 
-      const rootOpts = rootOf(command).opts();
       const result = await request(config, {
         method: op.method,
         path: op.path,
@@ -111,7 +131,7 @@ function buildOperationCommand(
         query,
         body,
         module,
-        timeoutMs: rootOpts.timeout ? Number(rootOpts.timeout) * 1000 : undefined,
+        timeoutMs: timeoutMsFrom(command),
       });
 
       const columns = typeof opts.columns === "string" ? opts.columns.split(",") : undefined;
@@ -141,9 +161,32 @@ export function registerGeneratedCommands(
   claimed: Set<string>,
 ): void {
   const availableModules = Object.keys(manifest.modules);
+
+  // Names the program already owns. Commander THROWS on a duplicate command, and
+  // this runs before parseAsync, so a module tagged e.g. `api` would take down
+  // every invocation including --help and sync, leaving no way to recover except
+  // deleting the manifest by hand. Custom modules choose their own tag, so this
+  // is reachable in the field.
+  const taken = new Set(program.commands.map((c) => c.name()));
+
   for (const [module, { operations }] of Object.entries(manifest.modules)) {
     if (claimed.has(module)) continue;
-    const group = new Command(module).description(`${operations.length} operations`);
+
+    let name = sanitizeCommand(module) || "module";
+    if (taken.has(name)) {
+      const alternative = `${name}-module`;
+      process.stderr.write(
+        `[warning] The instance exposes a module named "${module}", which clashes with a built-in ` +
+          `command. Exposing it as "${alternative}".
+`,
+      );
+      name = alternative;
+      let suffix = 2;
+      while (taken.has(name)) name = `${alternative}-${suffix++}`;
+    }
+    taken.add(name);
+
+    const group = new Command(name).description(`${operations.length} operations`);
     for (const op of operations) {
       group.addCommand(buildOperationCommand(module, op, availableModules));
     }

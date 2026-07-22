@@ -83,8 +83,15 @@ export function makeContextCommand(): Command {
     .description("Delete a context")
     .argument("<name>", "Context name")
     .action((name: string) => {
+      const before = getActiveContextName();
       deleteContext(name);
       console.log(chalk.green(`Deleted context "${name}".`));
+      // Deleting the active context promotes an arbitrary survivor. Unannounced,
+      // the next write would land on a different customer's instance.
+      const after = getActiveContextName();
+      if (after !== before) {
+        console.log(chalk.yellow(`Active context is now "${after}".`));
+      }
     });
 
   return cmd;

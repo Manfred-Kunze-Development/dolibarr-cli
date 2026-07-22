@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import { buildManifest } from "../../src/manifest.js";
-import { registerGeneratedCommands } from "../../src/registry.js";
+import { registerGeneratedCommands, isRootCreate } from "../../src/registry.js";
 
 const spec = JSON.parse(readFileSync("openapi/swagger-23.0.3.json", "utf8"));
 const manifest = buildManifest(spec, { fetchedAt: "2026-07-22T00:00:00Z" });
@@ -109,5 +109,50 @@ describe("registerGeneratedCommands — error attribution", () => {
   it("honours a global --json on the error path", async () => {
     const output = await run404(["--json", "invoices", "get", "999999"]);
     expect(() => JSON.parse(output.trim().split("\n").pop()!)).not.toThrow();
+  });
+});
+
+describe("required-field guard scope", () => {
+  it("applies only to the module's own create endpoint", () => {
+    // Keyed on the module but previously applied to every POST, which blocked
+    // 61 live endpoints — `invoices validate 999` demanded a socid.
+    const invoices = manifest.modules.invoices.operations;
+    const create = invoices.find((o) => o.command === "create")!;
+    expect(isRootCreate(create)).toBe(true);
+
+    for (const command of ["validate", "create-line", "settopaid", "create-contact"]) {
+      const op = invoices.find((o) => o.command === command);
+      if (op) expect(isRootCreate(op), `${command} must not be treated as create`).toBe(false);
+    }
+  });
+
+  it("treats no more than one operation per module as the root create", () => {
+    for (const [name, mod] of Object.entries(manifest.modules)) {
+      const roots = mod.operations.filter(isRootCreate);
+      expect(roots.length, `${name} has ${roots.length} root creates`).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe("module group name collisions", () => {
+  it("renames a module that clashes with a built-in command instead of throwing", () => {
+    // Commander throws on duplicate command names, and registration happens
+    // before parseAsync — so a module tagged `api` took down every invocation,
+    // including --help and sync, with no way back but deleting the manifest.
+    const collided = {
+      dolibarrVersion: null,
+      fetchedAt: "x",
+      basePath: "/api/index.php",
+      modules: {
+        api: { operations: manifest.modules.invoices.operations.slice(0, 2) },
+      },
+    };
+    const program = new Command();
+    program.addCommand(new Command("api").description("built-in passthrough"));
+
+    expect(() => registerGeneratedCommands(program, collided as never, new Set())).not.toThrow();
+    const names = program.commands.map((c) => c.name());
+    expect(names).toContain("api");
+    expect(names).toContain("api-module");
   });
 });

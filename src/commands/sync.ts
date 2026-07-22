@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import chalk from "chalk";
 import ora from "ora";
-import { resolveConfig, getActiveContextName, isJsonOutput, rootOf, type ResolvedConfig } from "../lib/config.js";
+import { resolveConfig, getActiveContextName, getActiveContext, isJsonOutput, timeoutMsFrom, type ResolvedConfig } from "../lib/config.js";
 import { buildManifest } from "../manifest.js";
 import { saveManifest } from "../lib/manifest-store.js";
 import { handleError, DolibarrApiError } from "../lib/errors.js";
@@ -96,8 +96,7 @@ export function makeSyncCommand(): Command {
     .action(async (opts, command: Command) => {
       try {
         const config = resolveConfig(command);
-        const rootTimeout = rootOf(command).opts().timeout;
-        const timeoutMs = rootTimeout ? Number(rootTimeout) * 1000 : undefined;
+        const timeoutMs = timeoutMsFrom(command);
         const spinner = isJsonOutput(command) ? null : ora("Fetching API description…").start();
 
         let spec: RawSpec;
@@ -112,6 +111,20 @@ export function makeSyncCommand(): Command {
 
         const version = opts.spec ? null : await fetchVersion(config, timeoutMs);
         spinner?.succeed("Fetched API description");
+
+        // The manifest is always stored under the ACTIVE context, so a sync
+        // aimed elsewhere via --base-url/env would overwrite that context's
+        // tree with a different instance's — and `modules` would then report it
+        // as the context's own.
+        const activeUrl = getActiveContext()?.baseUrl;
+        if (activeUrl && activeUrl !== config.baseUrl) {
+          console.error(
+            chalk.yellow(
+              `Warning: synced ${config.baseUrl} but storing it under context ` +
+                `"${getActiveContextName()}" (${activeUrl}).`,
+            ),
+          );
+        }
 
         const manifest = buildManifest(spec, {
           fetchedAt: new Date().toISOString(),

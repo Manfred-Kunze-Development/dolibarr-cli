@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveFrom, manifestPathFor, validateContextName, getStore } from "../../src/lib/config.js";
+import { Command } from "commander";
+import { resolveFrom, manifestPathFor, validateContextName, getStore, timeoutMsFrom } from "../../src/lib/config.js";
 
 describe("validateContextName", () => {
   it("accepts safe names", () => expect(() => validateContextName("acme-1_x")).not.toThrow());
@@ -49,5 +50,29 @@ describe("config store location", () => {
     // (and without lazy construction) merely importing this module wrote to the
     // user's real config directory on every test run.
     expect(getStore().path.split("\\").join("/")).toContain("dolibarr-cli-test-config");
+  });
+});
+
+describe("timeoutMsFrom", () => {
+  const withTimeout = (value?: string) => {
+    const program = new Command();
+    if (value !== undefined) program.setOptionValue("timeout", value);
+    return program;
+  };
+
+  it("converts seconds to milliseconds", () => {
+    expect(timeoutMsFrom(withTimeout("30"))).toBe(30_000);
+  });
+
+  it("is undefined when unset, so the caller's default applies", () => {
+    expect(timeoutMsFrom(withTimeout())).toBeUndefined();
+  });
+
+  it("rejects values that silently broke the request", () => {
+    // "abc" produced NaN, which also defeated the ?? DEFAULT fallback; "0" and
+    // "-5" are truthy strings that aborted every request immediately.
+    for (const bad of ["abc", "0", "-5", "Infinity"]) {
+      expect(() => timeoutMsFrom(withTimeout(bad)), bad).toThrow(/positive number/i);
+    }
   });
 });

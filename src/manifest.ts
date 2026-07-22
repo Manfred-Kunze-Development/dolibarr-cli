@@ -1,5 +1,5 @@
 // src/manifest.ts
-import { assignCommandNames } from "./naming.js";
+import { assignCommandNames, pathParamNames } from "./naming.js";
 
 export interface ParamSpec {
   name: string;
@@ -54,6 +54,16 @@ function toParam(raw: any): ParamSpec {
     required: location === "path" ? true : Boolean(raw.required),
     description: typeof raw.description === "string" ? raw.description : undefined,
   };
+}
+
+/** Sort path parameters into the order they appear in the URL template. */
+function orderByPath(path: string, params: ParamSpec[]): ParamSpec[] {
+  const order = pathParamNames(path);
+  const known = new Map(params.map((p) => [p.name, p]));
+  const sorted = order.map((name) => known.get(name)).filter((p): p is ParamSpec => Boolean(p));
+  // Keep anything declared but not present in the template rather than dropping it.
+  for (const p of params) if (!order.includes(p.name)) sorted.push(p);
+  return sorted;
 }
 
 /**
@@ -115,7 +125,10 @@ export function buildManifest(
           method: op.method,
           path: op.path,
           summary: op.summary,
-          pathParams: op.parameters.filter((p: any) => p.in === "path").map(toParam),
+          // Ordered by their appearance in the PATH, not by the spec's
+          // parameter array. Five live endpoints declare them in a different
+          // order, and positional CLI arguments follow the path.
+          pathParams: orderByPath(op.path, op.parameters.filter((p: any) => p.in === "path").map(toParam)),
           query: op.parameters.filter((p: any) => p.in === "query").map(toParam),
           hasBody: op.parameters.some((p: any) => p.in === "body" || p.in === "formData"),
         }))

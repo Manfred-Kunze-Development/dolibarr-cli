@@ -11,6 +11,8 @@ const LOCAL_HOSTS = new Set([
   "[::1]",
   "host.docker.internal",
   "dolibarr",
+  // CI reaches the compose stack over the docker-in-docker service host.
+  "docker",
 ]);
 
 /**

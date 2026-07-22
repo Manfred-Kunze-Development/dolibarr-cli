@@ -44,15 +44,39 @@ function assignPath(target: Json, path: string, value: unknown): void {
     }
   }
 
+  const isIndex = (key: string) => /^\d+$/.test(key);
+
   let cursor: Json = target;
-  for (const part of parts.slice(0, -1)) {
+  for (const [depth, part] of parts.slice(0, -1).entries()) {
+    if (Array.isArray(cursor)) {
+      // Descend INTO the array rather than replacing it. Overwriting it with a
+      // fresh object silently deleted every sibling element and every other
+      // field of the targeted one — on the way to a live ERP.
+      if (!isIndex(part)) {
+        throw new Error(
+          `"${parts.slice(0, depth + 1).join(".")}" indexes an array, so "${part}" must be a number.`,
+        );
+      }
+      const element = (cursor as unknown as unknown[])[Number(part)];
+      if (typeof element !== "object" || element === null) {
+        throw new Error(`"${path}" has no element at index ${part}.`);
+      }
+      cursor = element as Json;
+      continue;
+    }
+
     const next = cursor[part];
-    if (typeof next !== "object" || next === null || Array.isArray(next)) {
+    if (typeof next !== "object" || next === null) {
       cursor[part] = Object.create(null) as Json;
     }
     cursor = cursor[part] as Json;
   }
-  cursor[parts[parts.length - 1]] = value;
+
+  const last = parts[parts.length - 1];
+  if (Array.isArray(cursor) && !isIndex(last)) {
+    throw new Error(`"${path}" indexes an array, so "${last}" must be a number.`);
+  }
+  cursor[last] = value;
 }
 
 function splitPair(pair: string, flag: string): [string, string] {
@@ -106,7 +130,15 @@ export function buildBody(inputs: BodyInputs): Json | undefined {
 
   for (const pair of extrafield) {
     const [key, value] = splitPair(pair, "--extrafield");
-    const options = (body.array_options as Json | undefined) ?? {};
+    // Dolibarr serialises an empty extrafield set as `[]`, not `{}`, so a body
+    // round-tripped from the API carries an ARRAY here. Writing a named
+    // property onto it produces something JSON.stringify silently discards —
+    // the extrafield would never reach the server.
+    const existing = body.array_options;
+    const options: Json =
+      existing && typeof existing === "object" && !Array.isArray(existing)
+        ? (existing as Json)
+        : Object.create(null);
     options[`options_${key}`] = value;
     body.array_options = options;
   }
