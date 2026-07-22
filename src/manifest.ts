@@ -42,13 +42,34 @@ const METHODS = ["get", "post", "put", "delete", "patch"] as const;
 type RawSpec = Record<string, any>;
 
 function toParam(raw: any): ParamSpec {
+  const location = raw.in === "path" ? "path" : "query";
   return {
     name: String(raw.name),
-    in: raw.in === "path" ? "path" : "query",
+    in: location,
     type: typeof raw.type === "string" ? raw.type : "string",
-    required: Boolean(raw.required),
+    // A path parameter is structurally mandatory — the URL cannot be formed
+    // without it — so the spec's own `required` is ignored for those. Both
+    // committed fixtures really do mark some path params required:false, e.g.
+    // GET /thirdparties/{id}/generateBankAccountDocument/{companybankid}/{model}.
+    required: location === "path" ? true : Boolean(raw.required),
     description: typeof raw.description === "string" ? raw.description : undefined,
   };
+}
+
+/**
+ * Merge parameters shared across a path item with an operation's own.
+ *
+ * Swagger 2.0 allows parameters to be declared once on the PathItem and
+ * inherited by every method on it. Reading only the operation's list loses
+ * them, and a lost path parameter means the URL cannot be built at runtime.
+ * Operation-level entries win, matched on name + location.
+ */
+function mergeParameters(shared: any[], own: any[]): any[] {
+  const keyOf = (p: any) => `${p?.in}:${p?.name}`;
+  const merged = new Map<string, any>();
+  for (const param of shared) merged.set(keyOf(param), param);
+  for (const param of own) merged.set(keyOf(param), param);
+  return [...merged.values()];
 }
 
 /**
@@ -65,16 +86,20 @@ export function buildManifest(
   const byTag: Record<string, Array<{ operationId: string; method: string; path: string; summary?: string; parameters: any[] }>> = {};
 
   for (const [path, item] of Object.entries<any>(spec.paths ?? {})) {
+    const sharedParams = Array.isArray(item?.parameters) ? item.parameters : [];
     for (const method of METHODS) {
       const op = item?.[method];
       if (!op) continue;
-      const tag = String(op.tags?.[0] ?? "misc");
+      const tag = String(Array.isArray(op.tags) ? op.tags[0] ?? "misc" : "misc");
+      // `||` not `??`: an empty-string operationId must fall back too, or the
+      // command name derived from it comes out empty and Commander dies on parse.
+      const operationId = String(op.operationId || `${method} ${path}`);
       (byTag[tag] ??= []).push({
-        operationId: String(op.operationId ?? `${method}${path}`),
+        operationId,
         method,
         path,
         summary: typeof op.summary === "string" ? op.summary : undefined,
-        parameters: Array.isArray(op.parameters) ? op.parameters : [],
+        parameters: mergeParameters(sharedParams, Array.isArray(op.parameters) ? op.parameters : []),
       });
     }
   }

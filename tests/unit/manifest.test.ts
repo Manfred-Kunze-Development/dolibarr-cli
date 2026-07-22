@@ -61,3 +61,61 @@ describe("buildManifest", () => {
     expect(patched[0].path).toBe("/thirdparties/{id}/accounts/{site}");
   });
 });
+
+describe("buildManifest — spec robustness", () => {
+  const AT2 = "2026-07-22T00:00:00Z";
+
+  it("inherits parameters declared at the path-item level", () => {
+    // Valid Swagger 2.0: parameters shared by every method on a path. Missing
+    // them means the URL cannot be built at runtime.
+    const spec = {
+      paths: {
+        "/gizmos/{id}": {
+          parameters: [{ name: "id", in: "path", type: "integer", required: true }],
+          get: { tags: ["gizmos"], operationId: "retrieveGizmos", parameters: [] },
+        },
+      },
+    };
+    const op = buildManifest(spec, { fetchedAt: AT2 }).modules.gizmos.operations[0];
+    expect(op.pathParams.map((p) => p.name)).toEqual(["id"]);
+  });
+
+  it("lets operation-level parameters win over inherited ones", () => {
+    const spec = {
+      paths: {
+        "/gizmos/{id}": {
+          parameters: [{ name: "id", in: "path", type: "integer", description: "inherited" }],
+          get: {
+            tags: ["gizmos"],
+            operationId: "retrieveGizmos",
+            parameters: [{ name: "id", in: "path", type: "integer", description: "specific" }],
+          },
+        },
+      },
+    };
+    const op = buildManifest(spec, { fetchedAt: AT2 }).modules.gizmos.operations[0];
+    expect(op.pathParams).toHaveLength(1);
+    expect(op.pathParams[0].description).toBe("specific");
+  });
+
+  it("treats every path parameter as required regardless of the spec", () => {
+    // Real: both fixtures mark some path params required:false, e.g.
+    // GET /thirdparties/{id}/generateBankAccountDocument/{companybankid}/{model}.
+    // A path parameter is structurally mandatory — the URL cannot be formed
+    // without it — so the spec is simply wrong here.
+    const m = buildManifest(reference, { fetchedAt: AT2 });
+    for (const mod of Object.values(m.modules)) {
+      for (const op of mod.operations) {
+        for (const p of op.pathParams) {
+          expect(p.required, `${op.method} ${op.path} param ${p.name}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("does not emit an empty command name for a blank operationId", () => {
+    const spec = { paths: { "/widgets/{id}": { get: { tags: ["widgets"], operationId: "", parameters: [] } } } };
+    const op = buildManifest(spec, { fetchedAt: AT2 }).modules.widgets.operations[0];
+    expect(op.command).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+  });
+});
