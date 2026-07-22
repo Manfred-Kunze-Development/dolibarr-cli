@@ -1,0 +1,150 @@
+{
+  "agendaevents": [
+    "userownerid",
+    "type_code"
+  ],
+  "bankaccounts": [
+    "ref",
+    "label",
+    "type",
+    "currency_code",
+    "country_id"
+  ],
+  "categories": [
+    "label",
+    "type"
+  ],
+  "contacts": [
+    "lastname"
+  ],
+  "contracts": [
+    "socid",
+    "date_contrat"
+  ],
+  "donations": [
+    "amount"
+  ],
+  "emailtemplates": [
+    "label",
+    "topic",
+    "type_template"
+  ],
+  "eventattendees": [
+    "fk_project"
+  ],
+  "expensereports": [
+    "fk_user_author",
+    "date_debut",
+    "date_fin"
+  ],
+  "holidays": [
+    "fk_user",
+    "date_debut",
+    "date_fin"
+  ],
+  "interventions": [
+    "socid",
+    "fk_project",
+    "description"
+  ],
+  "invoices": [
+    "socid"
+  ],
+  "mailings": [
+    "title",
+    "sujet",
+    "body"
+  ],
+  "members": [
+    "morphy",
+    "typeid"
+  ],
+  "memberstypes": [
+    "label"
+  ],
+  "objectlinks": [
+    "fk_source",
+    "sourcetype",
+    "fk_target",
+    "targettype"
+  ],
+  "orders": [
+    "socid",
+    "date"
+  ],
+  "productlots": [
+    "fk_product",
+    "batch"
+  ],
+  "products": [
+    "ref",
+    "label"
+  ],
+  "projects": [
+    "ref",
+    "title"
+  ],
+  "proposals": [
+    "socid"
+  ],
+  "receptions": [
+    "socid",
+    "origin_id",
+    "origin_type"
+  ],
+  "salaries": [
+    "fk_user",
+    "label",
+    "amount"
+  ],
+  "shipments": [
+    "socid",
+    "origin_id",
+    "origin_type"
+  ],
+  "stockmovements": [
+    "product_id",
+    "warehouse_id",
+    "qty"
+  ],
+  "subscriptions": [
+    "fk_adherent",
+    "dateh",
+    "datef",
+    "amount"
+  ],
+  "supplierinvoices": [
+    "socid"
+  ],
+  "supplierorders": [
+    "socid"
+  ],
+  "supplierproposals": [
+    "socid"
+  ],
+  "tasks": [
+    "ref",
+    "label",
+    "fk_project"
+  ],
+  "thirdparties": [
+    "name"
+  ],
+  "tickets": [
+    "subject",
+    "message"
+  ],
+  "users": [
+    "login"
+  ],
+  "warehouses": [
+    "label"
+  ],
+  "webhook": [
+    "url",
+    "trigger_codes"
+  ],
+  "zapier": [
+    "url"
+  ]
+}

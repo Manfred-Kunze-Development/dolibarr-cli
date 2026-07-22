@@ -1,3 +1,52 @@
+// src/commands/modules.ts
+import { Command } from "commander";
+import chalk from "chalk";
+import Table from "cli-table3";
+import { getActiveContextName, isJsonOutput } from "../lib/config.js";
+import { loadManifest } from "../lib/manifest-store.js";
+
+export function makeModulesCommand(): Command {
+  return new Command("modules")
+    .description("List the modules the connected instance exposes")
+    .action((_opts, command: Command) => {
+      const manifest = loadManifest();
+      if (!manifest) {
+        // Exit non-zero in BOTH formats: a script doing
+        // `dolibarr modules --json || handle_unsynced` must be able to branch on
+        // status, and every other command signals failure regardless of format.
+        process.exitCode = 1;
+        if (isJsonOutput(command)) {
+          console.log(JSON.stringify({ synced: false, modules: [] }, null, 2));
+        } else {
+          console.error(chalk.yellow("No manifest for this context."));
+          console.error(chalk.dim('Run "dolibarr sync" first.'));
+        }
+        return;
+      }
+
+      const rows = Object.entries(manifest.modules)
+        .map(([name, mod]) => ({ module: name, operations: mod.operations.length }))
+        .sort((a, b) => a.module.localeCompare(b.module));
+
+      if (isJsonOutput(command)) {
+        console.log(JSON.stringify({
+          synced: true,
+          context: getActiveContextName(),
+          dolibarrVersion: manifest.dolibarrVersion,
+          fetchedAt: manifest.fetchedAt,
+          modules: rows,
+        }, null, 2));
+        return;
+      }
+
+      const table = new Table({ head: [chalk.cyan("module"), chalk.cyan("operations")] });
+      for (const row of rows) table.push([row.module, String(row.operations)]);
+      console.log(table.toString());
+      console.log(chalk.dim(
+        `${rows.length} modules on Dolibarr ${manifest.dolibarrVersion ?? "(unknown)"} — synced ${manifest.fetchedAt}`,
+      ));
+    });
+}
 # Dolibarr CLI v1 Engine Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -149,8 +198,15 @@ console.log(`Copied ${count} data file(s) to ${to}`);
 
 - [ ] **Step 5: Install and verify**
 
-Run: `npm install && npm run typecheck`
-Expected: install succeeds; `typecheck` succeeds (no `src/` files yet, so no errors).
+Run: `npm install`
+Expected: install succeeds.
+
+Run: `npm run typecheck`
+Expected: **fails** with `error TS18003: No inputs were found in config file`. This is correct
+at this point — `include: ["src/**/*"]` matches nothing until Task 2 creates the first source
+file, and `tsc` treats an empty input set as an error rather than a trivial success. Do **not**
+add placeholder source files or weaken the tsconfig to silence it; it resolves by itself in
+Task 2. Re-run `npm run typecheck` after Task 2 to confirm it goes green.
 
 - [ ] **Step 6: Commit**
 
@@ -424,6 +480,16 @@ describe("buildManifest", () => {
   it("preserves basePath", () => {
     expect(buildManifest(reference, { fetchedAt: AT }).basePath).toBe("/api/index.php");
   });
+
+  it("harvests PATCH operations", () => {
+    // The reference spec has exactly one PATCH. Dropping it would lose an
+    // endpoint while still claiming complete coverage, and the live 23.0.3
+    // fixture cannot catch that because it contains no PATCH at all.
+    const m = buildManifest(reference, { fetchedAt: AT });
+    const patched = m.modules.thirdparties.operations.filter((o) => o.method === "patch");
+    expect(patched).toHaveLength(1);
+    expect(patched[0].path).toBe("/thirdparties/{id}/accounts/{site}");
+  });
 });
 ```
 
@@ -464,7 +530,16 @@ export interface Manifest {
   modules: Record<string, { operations: OperationSpec[] }>;
 }
 
-const METHODS = ["get", "post", "put", "delete"] as const;
+/**
+ * HTTP methods to harvest from the spec.
+ *
+ * `patch` matters: the reference capture contains exactly one PATCH operation
+ * (thirdpartiesModifySocieteAccount on /thirdparties/{id}/accounts/{site}).
+ * Omitting it silently drops an endpoint while claiming complete coverage.
+ * The live 23.0.3 capture has no PATCH at all, so only the reference fixture
+ * catches a regression here.
+ */
+const METHODS = ["get", "post", "put", "delete", "patch"] as const;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type RawSpec = Record<string, any>;
@@ -640,11 +715,41 @@ interface Store {
   contexts: Record<string, ContextEntry>;
 }
 
-export const store = new Conf<Store>({
-  projectName: "dolibarr",
-  projectSuffix: "",
-  defaults: { activeContext: "default", contexts: {} },
-});
+let cachedStore: Conf<Store> | undefined;
+
+/**
+ * The config store, constructed on first use.
+ *
+ * Deliberately lazy: `conf`'s constructor eagerly creates the config file on
+ * disk, so building this at module scope means merely *importing* this module
+ * writes to the user's real profile — polluting their config on every test run,
+ * and failing wherever HOME is read-only.
+ *
+ * DOLIBARR_CONFIG_DIR redirects the store elsewhere; the test suite sets it so
+ * tests can exercise context handling without touching the real profile.
+ */
+export function getStore(): Conf<Store> {
+  if (!cachedStore) {
+    const override = process.env.DOLIBARR_CONFIG_DIR;
+    cachedStore = new Conf<Store>({
+      projectName: "dolibarr",
+      projectSuffix: "",
+      ...(override ? { cwd: override } : {}),
+      // This file holds API keys in the clear. conf defaults to 0o666, which
+      // with a typical umask lands at 0644 — world-readable, so any other local
+      // account on a shared host or CI runner could read the credentials.
+      // Windows ignores POSIX modes and relies on profile ACLs instead.
+      configFileMode: 0o600,
+      defaults: { activeContext: "default", contexts: {} },
+    });
+  }
+  return cachedStore;
+}
+
+/** Test seam: drop the cached store so a new DOLIBARR_CONFIG_DIR takes effect. */
+export function resetStoreForTesting(): void {
+  cachedStore = undefined;
+}
 
 const CONTEXT_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -655,11 +760,11 @@ export function validateContextName(name: string): void {
 }
 
 export function getActiveContextName(): string {
-  return store.get("activeContext") ?? "default";
+  return getStore().get("activeContext") ?? "default";
 }
 
 export function getAllContexts(): Record<string, ContextEntry> {
-  return store.get("contexts") ?? {};
+  return getStore().get("contexts") ?? {};
 }
 
 export function getActiveContext(): ContextEntry | undefined {
@@ -668,16 +773,16 @@ export function getActiveContext(): ContextEntry | undefined {
 
 export function setContext(name: string, entry: ContextEntry): void {
   validateContextName(name);
-  store.set("contexts", { ...getAllContexts(), [name]: entry });
+  getStore().set("contexts", { ...getAllContexts(), [name]: entry });
 }
 
 export function deleteContext(name: string): void {
   const contexts = getAllContexts();
   if (!contexts[name]) throw new Error(`Context "${name}" does not exist.`);
   delete contexts[name];
-  store.set("contexts", contexts);
+  getStore().set("contexts", contexts);
   if (getActiveContextName() === name) {
-    store.set("activeContext", Object.keys(contexts)[0] ?? "default");
+    getStore().set("activeContext", Object.keys(contexts)[0] ?? "default");
   }
 }
 
@@ -687,13 +792,13 @@ export function setActiveContext(name: string): void {
       `Context "${name}" does not exist. Available: ${Object.keys(getAllContexts()).join(", ") || "(none)"}`,
     );
   }
-  store.set("activeContext", name);
+  getStore().set("activeContext", name);
 }
 
 /** Manifests live beside the config store, one file per context. */
 export function manifestPathFor(contextName: string): string {
   validateContextName(contextName);
-  return join(store.path, "..", "manifests", `${contextName}.json`);
+  return join(getStore().path, "..", "manifests", `${contextName}.json`);
 }
 
 export interface ResolveInputs {
@@ -1007,19 +1112,47 @@ export interface BodyInputs {
 
 type Json = Record<string, unknown>;
 
+/**
+ * Interpret a CLI string value.
+ *
+ * Only converts to a number when the text round-trips exactly. Dolibarr has
+ * real fields where a leading zero carries meaning — postal codes, account
+ * refs, barcodes, phone numbers with a trunk prefix — and `Number("01234")`
+ * would silently rewrite them as 1234.
+ */
 function coerce(raw: string): unknown {
   if (raw === "true") return true;
   if (raw === "false") return false;
   if (raw === "null") return null;
-  if (raw !== "" && !Number.isNaN(Number(raw))) return Number(raw);
+  if (raw !== "" && !Number.isNaN(Number(raw)) && String(Number(raw)) === raw) {
+    return Number(raw);
+  }
   return raw;
 }
 
+/**
+ * Path segments that must never be traversed.
+ *
+ * `cursor["__proto__"]` resolves to Object.prototype, which satisfies a naive
+ * typeof-object check, so a dotted key would walk into the real prototype and
+ * assign onto it — poisoning every object in the process (CWE-1321).
+ */
+const UNSAFE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
 function assignPath(target: Json, path: string, value: unknown): void {
   const parts = path.split(".");
+  for (const part of parts) {
+    if (UNSAFE_SEGMENTS.has(part)) {
+      throw new Error(`Unsafe key "${part}" in "${path}".`);
+    }
+  }
+
   let cursor: Json = target;
   for (const part of parts.slice(0, -1)) {
-    if (typeof cursor[part] !== "object" || cursor[part] === null) cursor[part] = {};
+    const next = cursor[part];
+    if (typeof next !== "object" || next === null || Array.isArray(next)) {
+      cursor[part] = Object.create(null) as Json;
+    }
     cursor = cursor[part] as Json;
   }
   cursor[parts[parts.length - 1]] = value;
@@ -1044,7 +1177,19 @@ export function buildBody(inputs: BodyInputs): Json | undefined {
 
   let body: Json = {};
   if (data !== undefined) {
-    const raw = data.startsWith("@") ? readFileSync(data.slice(1), "utf8") : data;
+    let raw: string;
+    if (data.startsWith("@")) {
+      const file = data.slice(1);
+      try {
+        raw = readFileSync(file, "utf8");
+      } catch (err) {
+        // readFileSync's ENOENT mentions neither --data nor what to do about it.
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(`--data file could not be read: ${file} (${reason})`);
+      }
+    } else {
+      raw = data;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -1402,43 +1547,68 @@ export async function request(config: ResolvedConfig, options: RequestOptions): 
   if (config.entity) headers.DOLAPIENTITY = config.entity;
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
 
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: options.method.toUpperCase(),
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`Request to ${url} timed out. Use --timeout to allow longer.`);
-    }
-    throw new Error(
-      `Cannot reach ${config.baseUrl}. Check the instance is running and the base URL is correct ` +
-        `(it must end in /api/index.php).`,
+  const isAbort = (err: unknown) => err instanceof Error && err.name === "AbortError";
+  const reasonOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
+  const timedOut = () =>
+    new Error(
+      `Request to ${url} timed out after ${Math.round(timeoutMs / 1000)}s. ` +
+        `Use --timeout <seconds> to allow longer.`,
     );
+
+  // The timer must stay armed until the body is fully read. fetch() resolves as
+  // soon as headers arrive, so clearing it there leaves a slow-drip or
+  // never-completing body with no protection at all — the CLI would hang forever.
+  try {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: options.method.toUpperCase(),
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (isAbort(err)) throw timedOut();
+      // Naming the cause matters: a TLS handshake failure or a refused
+      // connection are both "cannot reach", but only one is fixed by checking
+      // whether the instance is running.
+      throw new Error(
+        `Cannot reach ${config.baseUrl}: ${reasonOf(err)}\n` +
+          `Check the instance is running and the base URL is correct ` +
+          `(it must end in /api/index.php).`,
+      );
+    }
+
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (err) {
+      if (isAbort(err)) throw timedOut();
+      throw new Error(
+        `Connection to ${config.baseUrl} broke while reading the response: ${reasonOf(err)}`,
+      );
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = text;
+    }
+
+    if (!response.ok) {
+      throw new DolibarrApiError(response.status, parseErrorBody(parsed) || response.statusText, {
+        module: options.module,
+      });
+    }
+    return parsed;
   } finally {
     clearTimeout(timer);
   }
-
-  const text = await response.text();
-  let parsed: unknown;
-  try {
-    parsed = text ? JSON.parse(text) : null;
-  } catch {
-    parsed = text;
-  }
-
-  if (!response.ok) {
-    throw new DolibarrApiError(response.status, parseErrorBody(parsed) || response.statusText, {
-      module: options.module,
-    });
-  }
-  return parsed;
 }
 ```
 
@@ -1528,6 +1698,22 @@ export function renderValue(value: unknown): string {
   return String(value);
 }
 
+/**
+ * Fields worth showing first when a module has no configured hint list.
+ *
+ * Dolibarr key order is PHP property declaration order, which is close to
+ * useless for display: a real 163-key thirdparty starts
+ * module/id/entity/import_key/array_languages/contacts_ids — four of them null —
+ * with `name` at index 46. Most modules have no hint list, so without this the
+ * table would be blank columns for almost everything.
+ */
+const PREFERRED_FALLBACK = [
+  "id", "ref", "ref_ext", "label", "name", "title", "subject", "code",
+  "code_client", "login", "socid", "fk_soc", "fk_project", "email", "town",
+  "date", "datec", "date_creation", "qty", "price", "total_ttc",
+  "status", "statut", "active",
+];
+
 export function pickColumns(
   rows: Row[],
   hints: string[] | undefined,
@@ -1535,20 +1721,30 @@ export function pickColumns(
 ): string[] {
   if (override && override.length > 0) return override;
   if (rows.length === 0) return [];
-  const present = new Set<string>();
-  for (const row of rows) for (const key of Object.keys(row)) present.add(key);
+
+  // Union across all rows: a key missing from row 0 would otherwise be
+  // invisible for the entire table.
+  const scalarKeys = new Set<string>();
+  for (const row of rows) {
+    for (const [key, value] of Object.entries(row)) {
+      if (value === null || typeof value !== "object") scalarKeys.add(key);
+    }
+  }
+
+  const hasValue = (key: string) =>
+    rows.some((r) => r[key] !== undefined && r[key] !== null && r[key] !== "");
 
   if (hints && hints.length > 0) {
-    const chosen = hints.filter((h) => present.has(h) && rows.some((r) => r[h] !== undefined));
+    const chosen = hints.filter((h) => scalarKeys.has(h) && rows.some((r) => r[h] !== undefined));
     if (chosen.length > 0) return chosen;
   }
 
-  return Object.keys(rows[0])
-    .filter((key) => {
-      const value = rows[0][key];
-      return value === null || typeof value !== "object";
-    })
-    .slice(0, MAX_FALLBACK_COLUMNS);
+  const preferred = PREFERRED_FALLBACK.filter((key) => scalarKeys.has(key) && hasValue(key));
+  if (preferred.length > 0) return preferred.slice(0, MAX_FALLBACK_COLUMNS);
+
+  // Nothing recognisable — prefer columns that at least carry data.
+  const populated = [...scalarKeys].filter(hasValue);
+  return (populated.length > 0 ? populated : [...scalarKeys]).slice(0, MAX_FALLBACK_COLUMNS);
 }
 
 /**
@@ -1556,7 +1752,7 @@ export function pickColumns(
  * reports only what was received. Never fabricate a total or a page count.
  */
 export function formatFooter(count: number, page: number): string {
-  return `${count} results (page ${page + 1})`;
+  return `${count} ${count === 1 ? "result" : "results"} (page ${page + 1})`;
 }
 
 export function formatList(
@@ -1586,7 +1782,10 @@ export function formatDetail(record: Row, command: Command): void {
     console.log(JSON.stringify(record, null, 2));
     return;
   }
-  const table = new Table();
+  // wordWrap matters here: real records carry nested blobs such as `rights`,
+  // which stringify to long unbroken lines that would otherwise overrun the
+  // terminal width instead of wrapping.
+  const table = new Table({ wordWrap: true });
   for (const [key, value] of Object.entries(record)) {
     table.push({ [chalk.cyan(key)]: renderValue(value) });
   }
@@ -1680,22 +1879,64 @@ Expected: FAIL — cannot resolve `../../src/lib/manifest-store.js`.
 
 ```ts
 // src/lib/manifest-store.ts
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Manifest } from "../manifest.js";
 import { manifestPathFor, getActiveContextName } from "./config.js";
 
+/**
+ * Write the manifest atomically.
+ *
+ * A plain writeFileSync can be interrupted or interleaved by a concurrent
+ * `sync`, and a truncated manifest may still parse as valid JSON with fewer
+ * modules — loading silently as a complete-looking but wrong picture of the
+ * instance. Writing to a temp file and renaming makes the swap atomic, so a
+ * reader sees either the old manifest or the new one.
+ *
+ * Indented on purpose: this is a file users open when a command they expected
+ * is missing after a sync.
+ */
 export function saveManifestTo(path: string, manifest: Manifest): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(manifest), "utf8");
+  const temp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temp, JSON.stringify(manifest, null, 2), "utf8");
+    renameSync(temp, path);
+  } catch (err) {
+    rmSync(temp, { force: true });
+    throw err;
+  }
 }
 
-/** A missing or corrupt manifest is not fatal — the CLI falls back to static commands. */
+/**
+ * A missing or corrupt manifest is not fatal — the CLI falls back to static
+ * commands. But it says so on stderr for anything other than "not synced yet",
+ * because silently offering fewer commands than expected is hard to diagnose.
+ */
 export function loadManifestFrom(path: string): Manifest | undefined {
-  if (!existsSync(path)) return undefined;
+  let raw: string;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as Manifest;
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // Not synced yet is the normal first-run state, not a problem worth reporting.
+    if (code === "ENOENT") return undefined;
+    // A permissions problem is actionable, and "run sync" will NOT fix it —
+    // sync would fail writing to the same place.
+    process.stderr.write(
+      `[warning] Could not read the command manifest at ${path}: ` +
+        `${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(raw) as Manifest;
   } catch {
+    process.stderr.write(
+      `[warning] The command manifest at ${path} is unreadable. ` +
+        `Run "dolibarr sync" to rebuild it.\n`,
+    );
     return undefined;
   }
 }
@@ -1813,7 +2054,7 @@ Expected: FAIL — cannot resolve `../../src/registry.js`.
 // src/registry.ts
 import { Command, Option } from "commander";
 import type { Manifest, OperationSpec } from "./manifest.js";
-import { resolveConfig } from "./lib/config.js";
+import { resolveConfig, rootOf, isJsonOutput } from "./lib/config.js";
 import { request } from "./lib/client.js";
 import { buildBody, checkRequired } from "./lib/body.js";
 import { formatResult } from "./lib/output.js";
@@ -1827,11 +2068,33 @@ const require = createRequire(import.meta.url);
 const REQUIRED: Record<string, string[]> = require("./data/required-fields.json");
 const COLUMNS: Record<string, string[]> = require("./data/columns.json");
 
+/**
+ * Long flags declared on the root program.
+ *
+ * Commander binds a duplicated long flag to the ROOT command, so a generated
+ * option with one of these names would be unreachable from its own action.
+ * Dolibarr really does have a query parameter called `entity` (on
+ * `GET /login` and `GET /users/{id}/setGroup/{group}`), which collides with the
+ * global multi-company selector. Those get a `--query-` prefix instead.
+ */
+const RESERVED_FLAGS = new Set(["api-key", "base-url", "entity", "timeout", "json", "color", "version", "help"]);
+
+/** The flag name to expose for a query parameter, avoiding root collisions. */
+export function flagNameFor(paramName: string): string {
+  return RESERVED_FLAGS.has(paramName) ? `query-${paramName}` : paramName;
+}
+
+/** Commander camelCases on hyphens only. */
+function optionKeyFor(flagName: string): string {
+  return flagName.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+}
+
 function addQueryOptions(cmd: Command, op: OperationSpec): void {
   for (const param of op.query) {
-    const flag = `--${param.name} <value>`;
-    const description = param.description?.replace(/\s+/g, " ").slice(0, 120) ?? "";
-    cmd.addOption(new Option(flag, description));
+    const flagName = flagNameFor(param.name);
+    const renamed = flagName !== param.name ? ` (API parameter "${param.name}")` : "";
+    const description = (param.description?.replace(/\s+/g, " ").slice(0, 110) ?? "") + renamed;
+    cmd.addOption(new Option(`--${flagName} <value>`, description));
   }
 }
 
@@ -1842,7 +2105,11 @@ function addBodyOptions(cmd: Command): void {
     .option("--extrafield <key=value...>", "Set a custom field (maps to array_options)");
 }
 
-function buildOperationCommand(module: string, op: OperationSpec): Command {
+function buildOperationCommand(
+  module: string,
+  op: OperationSpec,
+  availableModules: string[],
+): Command {
   const cmd = new Command(op.command);
   if (op.summary) cmd.description(op.summary.replace(/\s*🔐\s*$/, "").trim());
 
@@ -1869,7 +2136,13 @@ function buildOperationCommand(module: string, op: OperationSpec): Command {
 
       const query: Record<string, unknown> = {};
       for (const param of op.query) {
-        const value = opts[param.name];
+        // Read under the exposed flag's key, which differs from the API
+        // parameter name when it had to be renamed to dodge a root global.
+        // Commander camelCases on hyphens only, so underscore and camelCase
+        // names (sqlfilters, contact_list, withLines) land under their literal
+        // key; a hyphenated one would not.
+        const key = optionKeyFor(flagNameFor(param.name));
+        const value = opts[key] ?? opts[param.name];
         if (value !== undefined) query[param.name] = value;
       }
 
@@ -1883,6 +2156,7 @@ function buildOperationCommand(module: string, op: OperationSpec): Command {
         if (op.method === "post") checkRequired(module, body, REQUIRED);
       }
 
+      const rootOpts = rootOf(command).opts();
       const result = await request(config, {
         method: op.method,
         path: op.path,
@@ -1890,13 +2164,18 @@ function buildOperationCommand(module: string, op: OperationSpec): Command {
         query,
         body,
         module,
+        timeoutMs: rootOpts.timeout ? Number(rootOpts.timeout) * 1000 : undefined,
       });
 
       const columns = typeof opts.columns === "string" ? opts.columns.split(",") : undefined;
       const page = query.page !== undefined ? Number(query.page) : 0;
       formatResult(result, command, { hints: COLUMNS[module], columns, page });
     } catch (err) {
-      handleError(err, Boolean((command.parent?.parent ?? command).opts().json));
+      // isJsonOutput walks to the root rather than assuming a fixed depth, and
+      // matches what the success path uses. availableModules must be passed:
+      // without it every 404 claims the module is disabled, because
+      // ![].includes(x) is always true.
+      handleError(err, isJsonOutput(command), availableModules);
     }
   });
 
@@ -1914,10 +2193,13 @@ export function registerGeneratedCommands(
   manifest: Manifest,
   claimed: Set<string>,
 ): void {
+  const availableModules = Object.keys(manifest.modules);
   for (const [module, { operations }] of Object.entries(manifest.modules)) {
     if (claimed.has(module)) continue;
     const group = new Command(module).description(`${operations.length} operations`);
-    for (const op of operations) group.addCommand(buildOperationCommand(module, op));
+    for (const op of operations) {
+      group.addCommand(buildOperationCommand(module, op, availableModules));
+    }
     program.addCommand(group);
   }
 }
@@ -2020,10 +2302,10 @@ import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import chalk from "chalk";
 import ora from "ora";
-import { resolveConfig, getActiveContextName, isJsonOutput, type ResolvedConfig } from "../lib/config.js";
+import { resolveConfig, getActiveContextName, isJsonOutput, rootOf, type ResolvedConfig } from "../lib/config.js";
 import { buildManifest } from "../manifest.js";
 import { saveManifest } from "../lib/manifest-store.js";
-import { handleError } from "../lib/errors.js";
+import { handleError, DolibarrApiError } from "../lib/errors.js";
 import { request } from "../lib/client.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -2034,6 +2316,13 @@ export function specUrlFor(baseUrl: string): string {
 }
 
 /**
+ * Generous by default: the explorer scans every enabled module, and a cold
+ * remote instance with many modules is far slower than the ~0.6s a warm local
+ * one takes. Overridable via --timeout.
+ */
+export const DEFAULT_SPEC_TIMEOUT_MS = 180_000;
+
+/**
  * Fetch the instance's Swagger 2.0 document.
  *
  * Deliberately not converted to OpenAPI 3: a command tree needs only paths,
@@ -2042,45 +2331,57 @@ export function specUrlFor(baseUrl: string): string {
  * Slow against a cold instance — the explorer scans every enabled module — so
  * callers should show a spinner and allow a generous timeout.
  */
-export async function fetchSpec(config: ResolvedConfig): Promise<RawSpec> {
+
+export async function fetchSpec(
+  config: ResolvedConfig,
+  opts: { timeoutMs?: number } = {},
+): Promise<RawSpec> {
   const url = specUrlFor(config.baseUrl);
-  const response = await fetch(url, {
-    headers: { DOLAPIKEY: config.apiKey, Accept: "application/json" },
-    signal: AbortSignal.timeout(180_000),
-  }).catch(() => {
-    throw new Error(`Cannot reach ${url}. Is the instance running and the base URL correct?`);
-  });
 
-  const text = await response.text();
-
-  if (!response.ok) {
-    if (/api\/temp not writable/i.test(text)) {
-      throw new Error(
-        "The instance cannot write to api/temp, so it cannot generate its API description.\n" +
-          "This usually means the API module was enabled by writing MAIN_MODULE_API straight to the\n" +
-          "database rather than through activateModule(), which creates that directory.\n" +
-          "Re-enable the API module from the Dolibarr UI, then retry.",
-      );
-    }
-    if (response.status === 403 || response.status === 404) {
-      throw new Error(
-        `The API explorer is unavailable (HTTP ${response.status}). It may be turned off via\n` +
-          "API_EXPLORER_DISABLED. Supply a spec file instead: dolibarr sync --spec <file>",
-      );
-    }
-    throw new Error(`Failed to fetch the API description: HTTP ${response.status}`);
-  }
-
+  let spec: unknown;
   try {
-    return JSON.parse(text) as RawSpec;
-  } catch {
-    throw new Error(`The API description at ${url} was not valid JSON.`);
+    // Routed through request() rather than a bare fetch so this inherits
+    // DOLAPIENTITY, timeout handling that also covers the ~900KB body read, and
+    // connection errors that name their cause. Sending the entity matters:
+    // the explorer document is entity-scoped, so syncing without it builds the
+    // entity-1 tree while every generated command targets the configured
+    // entity — and an unknown entity answers 200 with a near-empty spec rather
+    // than failing.
+    spec = await request(config, {
+      method: "get",
+      path: "/explorer/swagger.json",
+      timeoutMs: opts.timeoutMs ?? DEFAULT_SPEC_TIMEOUT_MS,
+    });
+  } catch (err) {
+    if (err instanceof DolibarrApiError) {
+      if (/api\/temp not writable/i.test(err.message)) {
+        throw new Error(
+          "The instance cannot write to api/temp, so it cannot generate its API description.\n" +
+            "This usually means the API module was enabled by writing MAIN_MODULE_API straight to the\n" +
+            "database rather than through activateModule(), which creates that directory.\n" +
+            "Re-enable the API module from the Dolibarr UI, then retry.",
+        );
+      }
+      if (err.status === 403 || err.status === 404) {
+        throw new Error(
+          `The API explorer is unavailable (HTTP ${err.status}). It may be turned off via\n` +
+            "API_EXPLORER_DISABLED. Supply a spec file instead: dolibarr sync --spec <file>",
+        );
+      }
+      throw new Error(`Failed to fetch the API description: HTTP ${err.status}: ${err.message}`);
+    }
+    throw err; // connection and timeout errors already carry their cause
   }
+
+  if (!spec || typeof spec !== "object" || typeof (spec as RawSpec).paths !== "object") {
+    throw new Error(`The API description at ${url} was not a usable Swagger document.`);
+  }
+  return spec as RawSpec;
 }
 
-async function fetchVersion(config: ResolvedConfig): Promise<string | null> {
+async function fetchVersion(config: ResolvedConfig, timeoutMs?: number): Promise<string | null> {
   try {
-    const status = (await request(config, { method: "get", path: "/status" })) as any;
+    const status = (await request(config, { method: "get", path: "/status", timeoutMs })) as any;
     return status?.success?.dolibarr_version ?? null;
   } catch {
     return null;
@@ -2094,19 +2395,21 @@ export function makeSyncCommand(): Command {
     .action(async (opts, command: Command) => {
       try {
         const config = resolveConfig(command);
+        const rootTimeout = rootOf(command).opts().timeout;
+        const timeoutMs = rootTimeout ? Number(rootTimeout) * 1000 : undefined;
         const spinner = isJsonOutput(command) ? null : ora("Fetching API description…").start();
 
         let spec: RawSpec;
         try {
           spec = opts.spec
             ? (JSON.parse(readFileSync(opts.spec, "utf8")) as RawSpec)
-            : await fetchSpec(config);
+            : await fetchSpec(config, { timeoutMs });
         } catch (err) {
           spinner?.fail();
           throw err;
         }
 
-        const version = opts.spec ? null : await fetchVersion(config);
+        const version = opts.spec ? null : await fetchVersion(config, timeoutMs);
         spinner?.succeed("Fetched API description");
 
         const manifest = buildManifest(spec, {
@@ -2124,11 +2427,14 @@ export function makeSyncCommand(): Command {
             dolibarrVersion: manifest.dolibarrVersion,
             modules: moduleCount,
             operations: opCount,
+            entity: config.entity ?? null,
             manifest: path,
           }, null, 2));
         } else {
           console.log(chalk.green(`Synced ${moduleCount} modules, ${opCount} operations.`));
           if (manifest.dolibarrVersion) console.log(chalk.dim(`Dolibarr ${manifest.dolibarrVersion}`));
+          // The spec is entity-scoped, so say which entity this tree describes.
+          if (config.entity) console.log(chalk.dim(`Entity ${config.entity}`));
           console.log(chalk.dim(`Manifest: ${path}`));
         }
       } catch (err) {
@@ -2220,8 +2526,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { createInterface } from "node:readline/promises";
 import {
-  store, setContext, setActiveContext, getActiveContextName, getActiveContext,
-  getAllContexts, deleteContext, resolveConfig, isJsonOutput,
+  getStore, setContext, setActiveContext, getActiveContextName, getActiveContext,
+  getAllContexts, deleteContext, resolveConfig, isJsonOutput, rootOf,
 } from "../lib/config.js";
 import { request } from "../lib/client.js";
 import { handleError } from "../lib/errors.js";
@@ -2236,11 +2542,39 @@ export function makeAuthCommand(): Command {
   cmd
     .command("login")
     .description("Store credentials for the active context")
-    .option("--api-key <key>", "API key (Setup → Users → API key in Dolibarr)")
-    .option("--base-url <url>", "Base URL, ending in /api/index.php")
-    .action(async (opts) => {
-      let { apiKey, baseUrl } = opts;
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Supply credentials non-interactively with the global options:",
+        "  dolibarr auth login --base-url https://host/api/index.php --api-key <key>",
+        "",
+      ].join("\n"),
+    )
+    .action(async (_opts, command: Command) => {
+      // --api-key and --base-url are declared on the ROOT program. Redeclaring
+      // them here would collide: Commander binds a duplicated long flag to the
+      // root, so this action's own opts() would come back empty and the flags
+      // would appear to be ignored.
+      const rootOpts = rootOf(command).opts();
+      let apiKey: string | undefined = rootOpts.apiKey;
+      let baseUrl: string | undefined = rootOpts.baseUrl;
       const current = getActiveContext();
+
+      if ((!apiKey || !baseUrl) && !process.stdin.isTTY) {
+        // Without a terminal, readline resolves the first prompt from whatever
+        // is piped and then awaits forever on a closed stdin. Node sees no
+        // remaining handles and exits 0 mid-await — a silent no-op that reports
+        // success, which is the worst possible outcome for a CI job.
+        console.error(
+          chalk.red("auth login needs a terminal for prompts."),
+        );
+        console.error(
+          chalk.dim("Pass both --api-key and --base-url when stdin is not a terminal."),
+        );
+        process.exitCode = 1;
+        return;
+      }
 
       if (!apiKey || !baseUrl) {
         const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -2265,8 +2599,29 @@ export function makeAuthCommand(): Command {
       setContext(name, { apiKey, baseUrl });
       setActiveContext(name);
       console.log(chalk.green(`Credentials saved for context "${name}".`));
-      console.log(chalk.dim(`Config: ${store.path}`));
-      console.log(chalk.dim('Run "dolibarr sync" to build the command tree.'));
+      console.log(chalk.dim(`Config: ${getStore().path}`));
+
+      // Verify rather than cheerfully accepting a typo and failing on the next
+      // command. Credentials are kept either way — a temporarily unreachable
+      // instance is not a reason to discard correct input — but the exit status
+      // reflects that they are unproven.
+      try {
+        const status = (await request({ apiKey, baseUrl }, {
+          method: "get",
+          path: "/status",
+        })) as any;
+        console.log(
+          chalk.green(`Verified against Dolibarr ${status?.success?.dolibarr_version ?? "(unknown version)"}.`),
+        );
+        console.log(chalk.dim('Run "dolibarr sync" to build the command tree.'));
+      } catch (err) {
+        console.error(
+          chalk.yellow(
+            `Warning: saved, but could not verify: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+        process.exitCode = 1;
+      }
     });
 
   cmd
@@ -2303,11 +2658,19 @@ export function makeAuthCommand(): Command {
     .action(() => {
       const name = getActiveContextName();
       if (Object.keys(getAllContexts()).length <= 1) {
-        store.set("contexts", {});
+        getStore().set("contexts", {});
       } else {
         deleteContext(name);
       }
       console.log(chalk.green(`Credentials cleared for "${name}".`));
+
+      // deleteContext promotes whichever context was created earliest, which is
+      // arbitrary from the user's point of view. Say so, rather than leaving
+      // them pointed at a different instance without knowing it.
+      const now = getActiveContextName();
+      if (now !== name) {
+        console.log(chalk.yellow(`Active context is now "${now}".`));
+      }
     });
 
   return cmd;
@@ -2321,9 +2684,10 @@ export function makeAuthCommand(): Command {
 import { Command } from "commander";
 import chalk from "chalk";
 import Table from "cli-table3";
+import { existsSync } from "node:fs";
 import {
   getAllContexts, getActiveContextName, setActiveContext, setContext,
-  deleteContext, isJsonOutput,
+  deleteContext, isJsonOutput, manifestPathFor, rootOf,
 } from "../lib/config.js";
 
 export function makeContextCommand(): Command {
@@ -2359,16 +2723,40 @@ export function makeContextCommand(): Command {
     .action((name: string) => {
       setActiveContext(name);
       console.log(chalk.green(`Switched to "${name}".`));
+      // Each context caches its own command tree, so switching to one that has
+      // never been synced silently leaves only the static commands available.
+      if (!existsSync(manifestPathFor(name))) {
+        console.log(chalk.dim('No command tree cached yet — run "dolibarr sync".'));
+      }
     });
 
   cmd
     .command("create")
     .description("Create a context")
     .argument("<name>", "Context name")
-    .requiredOption("--base-url <url>", "Base URL, ending in /api/index.php")
-    .requiredOption("--api-key <key>", "API key")
-    .action((name: string, opts: { baseUrl: string; apiKey: string }) => {
-      setContext(name, { baseUrl: opts.baseUrl, apiKey: opts.apiKey });
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Use the global --base-url and --api-key:",
+        "  dolibarr context create acme --base-url https://host/api/index.php --api-key <key>",
+        "",
+      ].join("\n"),
+    )
+    .action((name: string, _opts: unknown, command: Command) => {
+      // Read from the root: redeclaring these as local requiredOptions made
+      // Commander bind the values to the root and then fail its own required
+      // check, so `context create` could never succeed.
+      const { baseUrl, apiKey } = rootOf(command).opts();
+      if (!baseUrl || !apiKey) {
+        console.error(chalk.red("Both --base-url and --api-key are required."));
+        console.error(
+          chalk.dim("  dolibarr context create <name> --base-url <url> --api-key <key>"),
+        );
+        process.exitCode = 1;
+        return;
+      }
+      setContext(name, { baseUrl, apiKey });
       console.log(chalk.green(`Created context "${name}".`));
     });
 
@@ -2391,7 +2779,7 @@ export function makeContextCommand(): Command {
 // src/commands/config.ts
 import { Command } from "commander";
 import chalk from "chalk";
-import { store, getActiveContextName, isJsonOutput, manifestPathFor } from "../lib/config.js";
+import { getStore, getActiveContextName, isJsonOutput, manifestPathFor } from "../lib/config.js";
 
 export function makeConfigCommand(): Command {
   const cmd = new Command("config").description("Inspect CLI configuration");
@@ -2401,7 +2789,7 @@ export function makeConfigCommand(): Command {
     .description("Show where configuration and manifests are stored")
     .action((_opts, command: Command) => {
       const payload = {
-        config: store.path,
+        config: getStore().path,
         manifest: manifestPathFor(getActiveContextName()),
         activeContext: getActiveContextName(),
       };
@@ -2429,7 +2817,9 @@ import { buildBody } from "../lib/body.js";
 import { formatResult } from "../lib/output.js";
 import { handleError } from "../lib/errors.js";
 
-const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
+// PATCH included: Dolibarr uses it for at least one real endpoint
+// (PATCH /thirdparties/{id}/accounts/{site}).
+const METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH"]);
 
 /**
  * Escape hatch for anything the generated tree does not cover -- an endpoint
@@ -2438,7 +2828,7 @@ const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
 export function makeApiCommand(): Command {
   return new Command("api")
     .description("Call any endpoint directly")
-    .argument("<method>", "GET, POST, PUT or DELETE")
+    .argument("<method>", "GET, POST, PUT, DELETE or PATCH")
     .argument("<path>", "Path relative to the API root, e.g. /thirdparties/1")
     .option("--query <key=value...>", "Query parameter")
     .option("--data <json>", "Request body as JSON, or @file.json")
@@ -2447,7 +2837,7 @@ export function makeApiCommand(): Command {
       try {
         const verb = method.toUpperCase();
         if (!METHODS.has(verb)) {
-          throw new Error(`Unsupported method "${method}". Use GET, POST, PUT or DELETE.`);
+          throw new Error(`Unsupported method "${method}". Use GET, POST, PUT, DELETE or PATCH.`);
         }
 
         const query: Record<string, unknown> = {};
@@ -2562,6 +2952,10 @@ const CRAFTED_MODULES = new Set<string>();
 export function buildProgram(manifest: Manifest | undefined): Command {
   const program = new Command();
 
+  // An unknown top-level name is usually a module this instance does not
+  // expose, or a typo. Commander's suggestion is more useful than a bare error.
+  program.showSuggestionAfterError();
+
   program
     .name("dolibarr")
     .description("CLI for the Dolibarr ERP/CRM REST API (also installed as `doli`)")
@@ -2569,6 +2963,7 @@ export function buildProgram(manifest: Manifest | undefined): Command {
     .option("--api-key <key>", "API key (overrides config)")
     .option("--base-url <url>", "Base URL ending in /api/index.php (overrides config)")
     .option("--entity <id>", "Entity id for multi-company instances (DOLAPIENTITY)")
+    .option("--timeout <seconds>", "Request timeout in seconds (default 60)")
     .option("--json", "Output raw JSON")
     .option("--no-color", "Disable coloured output");
 
@@ -2660,8 +3055,34 @@ export const LIVE_API_KEY = process.env.DOLIBARR_API_KEY ?? "dolibarrclidevkey00
 
 export const liveConfig = { baseUrl: LIVE_BASE_URL, apiKey: LIVE_API_KEY };
 
+const LOCAL_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+  "host.docker.internal",
+  "dolibarr",
+]);
+
+/**
+ * These tests CREATE and DELETE records, and they read DOLIBARR_BASE_URL — the
+ * very variable the CLI itself uses for normal operation. A developer who
+ * points the CLI at a customer's instance has it exported in their shell, and
+ * `npm test` would then mutate that instance. Non-local targets therefore
+ * require an explicit opt-in.
+ */
+export function targetIsAllowed(): boolean {
+  if (process.env.DOLIBARR_ALLOW_CONTRACT_TESTS === "1") return true;
+  try {
+    return LOCAL_HOSTS.has(new URL(LIVE_BASE_URL).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** Probe the instance so the suite can skip instead of failing when it is down. */
 export async function instanceAvailable(): Promise<boolean> {
+  if (!targetIsAllowed()) return false;
   try {
     const res = await fetch(`${LIVE_BASE_URL}/status`, {
       headers: { DOLAPIKEY: LIVE_API_KEY },
@@ -2672,6 +3093,21 @@ export async function instanceAvailable(): Promise<boolean> {
     return false;
   }
 }
+
+/** Tells the developer why the suite skipped, rather than leaving them guessing. */
+export function skipReason(): string {
+  if (!targetIsAllowed()) {
+    return (
+      `Refusing to run contract tests against a non-local target (${LIVE_BASE_URL}).\n` +
+      "These tests create and delete records. Set DOLIBARR_ALLOW_CONTRACT_TESTS=1 " +
+      "if that is genuinely what you want."
+    );
+  }
+  return (
+    `No Dolibarr reachable at ${LIVE_BASE_URL} — skipping contract tests.\n` +
+    "Start one with: docker compose --profile current up -d"
+  );
+}
 ```
 
 - [ ] **Step 2: Write the contract test**
@@ -2679,7 +3115,7 @@ export async function instanceAvailable(): Promise<boolean> {
 ```ts
 // tests/contract/live.test.ts
 import { describe, it, expect, beforeAll } from "vitest";
-import { liveConfig, instanceAvailable } from "./setup.js";
+import { liveConfig, instanceAvailable, skipReason } from "./setup.js";
 import { request } from "../../src/lib/client.js";
 import { fetchSpec } from "../../src/commands/sync.js";
 import { buildManifest } from "../../src/manifest.js";
@@ -2691,9 +3127,7 @@ import { DolibarrApiError } from "../../src/lib/errors.js";
 let available = false;
 beforeAll(async () => {
   available = await instanceAvailable();
-  if (!available) {
-    console.warn("No Dolibarr reachable — skipping contract tests. Start one with: docker compose --profile current up -d");
-  }
+  if (!available) console.warn(skipReason());
 });
 
 const live = (name: string, fn: () => Promise<void>, timeout?: number) =>
@@ -2734,17 +3168,27 @@ describe("live Dolibarr", () => {
     const created = (await request(liveConfig, {
       method: "post", path: "/thirdparties", body: { name: "dolibarr-cli contract test" },
     })) as number;
+    // Dolibarr answers create with a bare JSON integer. Note it is inconsistent:
+    // reading the same record back returns `id` as a STRING.
     expect(typeof created).toBe("number");
 
-    const fetched = (await request(liveConfig, {
-      method: "get", path: "/thirdparties/{id}", pathParams: { id: String(created) },
-    })) as any;
-    expect(fetched.name).toBe("dolibarr-cli contract test");
-
-    await request(liveConfig, {
-      method: "delete", path: "/thirdparties/{id}", pathParams: { id: String(created) },
-    });
+    // finally, not a trailing call: an assertion failure between create and
+    // delete would otherwise orphan the record permanently, and repeated CI
+    // failures would accumulate junk in whatever instance is configured.
+    try {
+      const fetched = (await request(liveConfig, {
+        method: "get", path: "/thirdparties/{id}", pathParams: { id: String(created) },
+      })) as any;
+      expect(fetched.name).toBe("dolibarr-cli contract test");
+    } finally {
+      await request(liveConfig, {
+        method: "delete", path: "/thirdparties/{id}", pathParams: { id: String(created) },
+      }).catch(() => {
+        console.warn(`Could not delete contract-test thirdparty ${created}; remove it manually.`);
+      });
+    }
   });
+
 });
 ```
 
@@ -2892,6 +3336,7 @@ Also installed as `doli`.
 | `--api-key <key>` | Override the API key |
 | `--base-url <url>` | Override the base URL |
 | `--entity <id>` | Entity id for multi-company instances |
+| `--timeout <seconds>` | Request timeout, default 60 |
 | `--json` | Raw JSON on stdout |
 | `--no-color` | Disable colour |
 
