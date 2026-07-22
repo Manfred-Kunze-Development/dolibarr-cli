@@ -189,10 +189,15 @@ src/
 `sync` reads the instance's Swagger 2.0 **directly** — a command tree needs only paths, methods,
 params and tags, so no OpenAPI 3 conversion is involved at runtime.
 
-**Command names derive from `operationId`**, which is unique and present across all 440
-operations. Two shapes: `<verb><Module>` (`listInvoices` → `list`, `removeInvoices` → `delete`)
-and `<module><Rest>` (`invoicesCreateLine` → `create-line`). Verified: 440/440 derive with zero
-collisions. Do not hand-name commands — extend `naming.ts` instead.
+**Command names derive from `operationId`.** Two shapes: `<verb><Module>` (`listInvoices` →
+`list`, `removeInvoices` → `delete`) and `<module><Rest>` (`invoicesCreateLine` → `create-line`).
+Do not hand-name commands — extend `naming.ts` instead.
+
+**`operationId` is NOT unique — do not key on it.** It is distinct across all 440 operations in
+the reference capture, but a live Dolibarr 23.0.3 attaches `thirdpartiesCreateSocieteAccount` to
+both `POST /thirdparties/{id}/accounts` and `POST /thirdparties/{id}/accounts/{site}`. Operation
+identity is **`method + path`**; `operationId` is only an input to naming. Collision
+disambiguation is therefore a required code path, exercised by the v23 fixture.
 
 Patterns to carry over verbatim from `backbone/cli`:
 
@@ -231,14 +236,43 @@ npx vitest run -t "test name"                     # single test by name
 
 ## Testing Against a Live Dolibarr
 
-Contract tests need a real instance. `../dolibarr-mcp/compose.yml` brings one up (Dolibarr + MariaDB, published on port 80, admin/adminadmin):
+This repo's `compose.yml` runs three versions — previous/current/next — selected by profile.
+No UI interaction is needed; modules and an admin API key are seeded automatically.
 
 ```bash
-cd ../dolibarr-mcp && docker compose up -d
-# then generate an API key in the Dolibarr UI (Setup → Users → API key)
+docker compose --profile current up -d     # 23.0.3 on http://localhost:8023
+docker compose --profile all up -d         # 22 / 23 / develop — the CI matrix
+docker compose --profile current down -v   # reset, including the seeded database
 ```
 
-Set `DOLIBARR_API_URL` (e.g. `http://localhost/api/index.php`) and `DOLIBARR_API_KEY` in the environment. `../dolibarr-mcp/tests/` shows the split worth copying: fast unit tests over the client/formatters, plus `tests/contracts/*.test.ts` that exercise real endpoints and skip cleanly when the instance is unreachable (`waitForDolibarr`).
+| Profile | Version | URL |
+|---|---|---|
+| `previous` | 22.0.5 | `http://localhost:8022` |
+| `current` | 23.0.3 | `http://localhost:8023` |
+| `next` | 24.0.0-beta | `http://localhost:8024` |
+
+Dev API key: `dolibarrclidevkey000000000000000` (admin/adminadmin). Seeded, dev-only.
+
+```bash
+curl -H "DOLAPIKEY: dolibarrclidevkey000000000000000" \
+  http://localhost:8023/api/index.php/status
+```
+
+Three things about this stack that are easy to get wrong, all learned the hard way:
+
+- **Enable modules with `DOLI_ENABLE_MODULES`, never by inserting `MAIN_MODULE_*` rows.** The env
+  var routes through `activateModule()`, which creates `/var/www/documents/api/temp`. Insert the
+  const directly and the module looks enabled but the spec endpoint 500s with
+  `Erreur temp dir api/temp not writable`.
+- **Healthchecks must use `curl`, not PHP.** The image ships `allow_url_fopen=off`, so a
+  `file_get_contents` probe fails forever while the container sits in `starting`.
+- **`DOLI_ENABLE_MODULES` must have no spaces.** `docker-init.php` does `explode(',', …)` without
+  trimming, so a YAML folded scalar turns `Banque` into `mod Banque` and activation fails.
+
+Fetching the spec from a cold instance takes ~30–60 s — the explorer scans every module.
+
+`../dolibarr-mcp/tests/` shows the unit + contract split worth copying, including skipping
+cleanly when the instance is unreachable.
 
 Do not copy the API key that sits in `../dolibarr-mcp/.mcp.json` into anything committed here.
 

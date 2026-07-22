@@ -1,0 +1,162 @@
+name: dolibarr-cli-dev
+
+# Local Dolibarr instances for development and CI.
+#
+# We support three versions at a time — previous, current, next — which is what
+# the CI matrix exercises and what the version-sensitive parts of the CLI
+# (required-fields.json, the derived command tree) must tolerate.
+#
+#   previous  22  ->  http://localhost:8022
+#   current   23  ->  http://localhost:8023
+#   next      develop (24.0.0-beta)  ->  http://localhost:8024
+#
+# Usage:
+#   docker compose --profile current up -d      # just the one you need
+#   docker compose --profile all up -d          # full matrix (heavy)
+#   docker compose --profile current down -v    # reset, including the seeded DB
+#
+# Every instance is seeded with the API module enabled and a fixed admin API key
+# (see docker/init/), so no UI interaction is needed before the CLI can talk to it.
+
+x-dolibarr-env: &dolibarr-env
+  DOLI_DB_TYPE: mysqli
+  DOLI_DB_HOST_PORT: "3306"
+  DOLI_DB_USER: dolibarr
+  DOLI_DB_PASSWORD: dolibarr
+  DOLI_DB_NAME: dolibarr
+  DOLI_ADMIN_LOGIN: admin
+  DOLI_ADMIN_PASSWORD: adminadmin
+  DOLI_INIT_DEMO: "0"
+  DOLI_PROD: "0"
+  # Activated through the image's own docker-init.php, which calls activateModule()
+  # and therefore runs each module's init side effects. Enabling modules by
+  # INSERTing MAIN_MODULE_* rows instead leaves /var/www/documents/api/temp
+  # uncreated, and the spec endpoint then 500s with
+  # "Erreur temp dir api/temp not writable".
+  #
+  # Api is required. The rest give the CLI a realistic surface to exercise;
+  # override DOLI_ENABLE_MODULES to test against a narrower instance, which is
+  # exactly the module-availability variation the CLI must tolerate.
+  #
+  # Must stay on one line with no spaces: docker-init.php does explode(',', ...)
+  # without trimming, so " Banque" would be looked up as class "mod Banque".
+  DOLI_ENABLE_MODULES: "Api,Societe,Facture,Product,Commande,Propale,Projet,Stock,Categorie,Banque,Ticket,Fournisseur,Contrat,Expedition,Adherent,Agenda"
+
+x-db-env: &db-env
+  MARIADB_ROOT_PASSWORD: root
+  MARIADB_DATABASE: dolibarr
+  MARIADB_USER: dolibarr
+  MARIADB_PASSWORD: dolibarr
+
+x-db-healthcheck: &db-healthcheck
+  test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+  interval: 5s
+  timeout: 5s
+  retries: 30
+
+# The API status endpoint is the readiness signal that actually matters: it proves
+# the install finished, the API module is enabled, and the seeded key authenticates.
+#
+# Uses curl (present in the image) rather than PHP's file_get_contents: the image
+# ships with allow_url_fopen=off, so any PHP-based HTTP probe silently fails.
+x-doli-healthcheck: &doli-healthcheck
+  test:
+    - CMD
+    - curl
+    - -fsS
+    - -o
+    - /dev/null
+    - -H
+    - "DOLAPIKEY: dolibarrclidevkey000000000000000"
+    - http://localhost/api/index.php/status
+  interval: 10s
+  timeout: 10s
+  retries: 30
+  start_period: 60s
+
+services:
+  # ----------------------------------------------------------------- previous (22)
+  db-previous:
+    image: mariadb:lts
+    profiles: [previous, all]
+    environment: *db-env
+    healthcheck: *db-healthcheck
+    volumes:
+      - db-previous:/var/lib/mysql
+
+  dolibarr-previous:
+    image: dolibarr/dolibarr:22
+    profiles: [previous, all]
+    depends_on:
+      db-previous:
+        condition: service_healthy
+    environment:
+      <<: *dolibarr-env
+      DOLI_DB_HOST: db-previous
+      DOLI_URL_ROOT: http://localhost:8022
+    ports:
+      - "8022:80"
+    healthcheck: *doli-healthcheck
+    volumes:
+      - ./docker/init:/var/www/scripts/docker-init.d:ro
+      - docs-previous:/var/www/documents
+
+  # ------------------------------------------------------------------ current (23)
+  db-current:
+    image: mariadb:lts
+    profiles: [current, all]
+    environment: *db-env
+    healthcheck: *db-healthcheck
+    volumes:
+      - db-current:/var/lib/mysql
+
+  dolibarr-current:
+    image: dolibarr/dolibarr:23
+    profiles: [current, all]
+    depends_on:
+      db-current:
+        condition: service_healthy
+    environment:
+      <<: *dolibarr-env
+      DOLI_DB_HOST: db-current
+      DOLI_URL_ROOT: http://localhost:8023
+    ports:
+      - "8023:80"
+    healthcheck: *doli-healthcheck
+    volumes:
+      - ./docker/init:/var/www/scripts/docker-init.d:ro
+      - docs-current:/var/www/documents
+
+  # ------------------------------------------------------- next (develop, 24 beta)
+  db-next:
+    image: mariadb:lts
+    profiles: [next, all]
+    environment: *db-env
+    healthcheck: *db-healthcheck
+    volumes:
+      - db-next:/var/lib/mysql
+
+  dolibarr-next:
+    image: dolibarr/dolibarr:develop
+    profiles: [next, all]
+    depends_on:
+      db-next:
+        condition: service_healthy
+    environment:
+      <<: *dolibarr-env
+      DOLI_DB_HOST: db-next
+      DOLI_URL_ROOT: http://localhost:8024
+    ports:
+      - "8024:80"
+    healthcheck: *doli-healthcheck
+    volumes:
+      - ./docker/init:/var/www/scripts/docker-init.d:ro
+      - docs-next:/var/www/documents
+
+volumes:
+  db-previous:
+  db-current:
+  db-next:
+  docs-previous:
+  docs-current:
+  docs-next:

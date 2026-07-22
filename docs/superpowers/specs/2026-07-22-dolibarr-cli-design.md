@@ -113,7 +113,15 @@ The spec endpoint accepts the same `DOLAPIKEY` auth as every other route
 | Cause | Behaviour |
 |---|---|
 | `API_EXPLORER_DISABLED` set | Explorer routes refuse. Fall back to the bundled spec; suggest `dolibarr sync --spec <file>`. |
-| `api/temp` not writable | Server returns a literal `500 temp dir api/temp not writable`. Detect and explain — it is a server filesystem problem, not a CLI bug. |
+| `api/temp` missing or not writable | Server returns a literal `500 temp dir api/temp not writable`. Detect and explain — it is a server-side setup problem, not a CLI bug. |
+
+The second is not exotic: it is what a Dolibarr instance does whenever the API module was
+enabled by writing `MAIN_MODULE_API` straight into `llx_const` instead of going through
+`activateModule()`, because the directory is created as an activation side effect.
+Reproduced locally, then fixed in our own compose stack — see [Local instances](#local-instances).
+
+`sync` is slow against a cold instance (the explorer scans every module: ~30–60 s, ~0.9 MB for
+30 modules), so it must show a spinner and must not be on the hot path of ordinary commands.
 
 A bundled spec ships as the default manifest source so the CLI is usable before the first
 `sync`, and `--spec <file>` accepts a hand-supplied spec. The bundled spec and the unit-test
@@ -125,8 +133,19 @@ count, and the instance's Dolibarr version — with `--refresh` as an alias for 
 
 ## Command-name derivation
 
-Dolibarr `operationId`s take two shapes. Verified across the reference spec: all 440 are
-present, unique, and resolve without collision.
+Dolibarr `operationId`s take two shapes.
+
+**`operationId` is not a reliable primary key.** It holds on the reference capture (440/440
+distinct) but fails on a live Dolibarr 23.0.3, where `thirdpartiesCreateSocieteAccount` is
+attached to two different paths:
+
+```
+POST /thirdparties/{id}/accounts
+POST /thirdparties/{id}/accounts/{site}
+```
+
+The identity of an operation is therefore **`method + path`**, and that is what crafted modules
+claim and what the manifest keys on. `operationId` is used only as the input to name derivation.
 
 **Shape A — root CRUD:** `<verb><Module>` → canonical verb.
 
@@ -152,9 +171,21 @@ remainder, normalise the leading verb token (`retrieve`/`get` → `get`; `remove
 
 The `Del`/`Remove` inconsistency is Dolibarr's, absorbed by the normalisation table.
 
-**Verified result:** 440/440 operations across 38 modules derive cleanly — **0 name collisions,
-0 falling back to the raw identifier.** Collision handling (fall back to the full kebab-cased
-`operationId`) is retained as a safety net for instances with modules the reference spec lacks.
+**Collision handling is mandatory, not a safety net.** When two operations derive the same
+command name, disambiguate by appending the extra path parameters of the longer path
+(`create-societe-account` and `create-societe-account-by-site`), and if that still collides, fall
+back to the full kebab-cased path. Ordering must be deterministic — sort by path before
+assigning — so the same spec always yields the same command names.
+
+**Verified against two real specs:**
+
+| Spec | Modules | Operations | Distinct operationIds | Collisions after derivation |
+|---|---|---|---|---|
+| Reference capture | 38 | 440 | 440 | 0 |
+| Live Dolibarr 23.0.3 | 30 | 428 | 427 | 1 (handled as above) |
+
+Both are committed as test fixtures so derivation is a regression test against two genuinely
+different surfaces rather than one.
 
 Known cosmetic wart, accepted: redundant nouns survive, e.g.
 `dolibarr invoices create-invoice-from-order`. Stripping a module-noun token after the verb is
@@ -257,14 +288,63 @@ Dolibarr list endpoints return a bare array with **no envelope and no total coun
 reads `N results (page P)`. The CLI never fabricates a total, and there is no Spring-style
 `Page<T>` handling to port from `backbone/cli`.
 
+## Local instances
+
+`compose.yml` provides three Dolibarr versions — previous, current, next — which is both the
+local dev story and the CI matrix. Versions are selected by Docker profile so a developer runs
+one while CI can run all three.
+
+| Profile | Image | Version | URL |
+|---|---|---|---|
+| `previous` | `dolibarr/dolibarr:22` | 22.0.5 | `http://localhost:8022` |
+| `current` | `dolibarr/dolibarr:23` | 23.0.3 | `http://localhost:8023` |
+| `next` | `dolibarr/dolibarr:develop` | 24.0.0-beta | `http://localhost:8024` |
+
+Each instance comes up fully usable with no UI interaction:
+
+- Modules are activated via the image's `DOLI_ENABLE_MODULES`, which routes through
+  `activateModule()` and runs the activation side effects. **Enabling modules by inserting
+  `MAIN_MODULE_*` rows directly does not work** — the module appears enabled but
+  `/var/www/documents/api/temp` is never created and the spec endpoint 500s.
+- A fixed admin API key is seeded by SQL through the image's `docker-init.d` hook, which runs
+  after both module activation and SuperAdmin creation.
+- The healthcheck probes `/api/index.php/status` with that key, so "healthy" means the API is
+  genuinely reachable and authenticating. It uses `curl`, not PHP: the image ships
+  `allow_url_fopen=off`, so a `file_get_contents` probe silently never succeeds.
+
+### Instance-dependence, measured
+
+The two specs we have differ substantially, which is the empirical basis for deriving the
+command tree rather than hardcoding it:
+
+| | Reference capture | Live 23.0.3 (16 modules enabled) |
+|---|---|---|
+| Modules | 38 | 30 |
+| Operations | 440 | 428 |
+| Paths | 285 | 287 |
+
+Present in the live instance but not the reference: `emailtemplates`, `memberstypes`,
+`objectlinks`, `paiements`, `productlots`. Present in the reference but not live: `boms`, `mos`,
+`workstations`, `knowledgemanagement`, `partnerships`, `recruitments`, `salaries`,
+`expensereports`, `donations`, `interventions`, `multicurrencies`, `supplierproposals`,
+`receptions`.
+
+Note the path count moves in the *opposite* direction to the operation count — fewer operations
+across more paths. Any assumption that one instance's surface is a superset or subset of
+another's is wrong.
+
 ## Testing
 
 TDD throughout.
 
-- **Unit** (no network): manifest builder against a committed spec fixture, name derivation
-  including the collision fallback, param/body assembly, error mapping, output formatting.
-  The reference spec is committed as a fixture so the 440-operation derivation is a regression test.
-- **Contract** (live): against `../dolibarr-mcp/compose.yml`, skipping cleanly when unreachable.
+- **Unit** (no network): manifest builder, name derivation including collision disambiguation,
+  param/body assembly, error mapping, output formatting. Run against **both** committed spec
+  fixtures (reference 38-module and live 23.0.3 30-module) — the second is what catches the
+  duplicate-`operationId` case the first misses.
+- **Contract** (live): against this repo's `compose.yml`, skipping cleanly when the instance is
+  unreachable so a developer without Docker running still gets a green unit suite.
+- **CI matrix**: previous / current / next profiles, so version-sensitive behaviour
+  (`required-fields.json`, module availability, spec quirks) is caught before a customer does.
 
 ## Delivery
 
