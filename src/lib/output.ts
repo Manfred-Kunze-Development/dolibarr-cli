@@ -68,7 +68,7 @@ export function pickColumns(
  * reports only what was received. Never fabricate a total or a page count.
  */
 export function formatFooter(count: number, page: number): string {
-  return `${count} results (page ${page + 1})`;
+  return `${count} ${count === 1 ? "result" : "results"} (page ${page + 1})`;
 }
 
 export function formatList(

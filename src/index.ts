@@ -23,6 +23,10 @@ const CRAFTED_MODULES = new Set<string>();
 export function buildProgram(manifest: Manifest | undefined): Command {
   const program = new Command();
 
+  // An unknown top-level name is usually a module this instance does not
+  // expose, or a typo. Commander's suggestion is more useful than a bare error.
+  program.showSuggestionAfterError();
+
   program
     .name("dolibarr")
     .description("CLI for the Dolibarr ERP/CRM REST API (also installed as `doli`)")

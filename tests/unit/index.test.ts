@@ -30,3 +30,25 @@ describe("buildProgram", () => {
     expect(flags).toEqual(expect.arrayContaining(["--api-key", "--base-url", "--entity", "--timeout", "--json"]));
   });
 });
+
+describe("global option shadowing", () => {
+  it("no subcommand redeclares a root global option", () => {
+    // Commander binds a duplicated long flag to the ROOT command, so a
+    // subcommand that redeclares one sees undefined in its own opts(). This
+    // broke `auth login --api-key X --base-url Y` — the primary onboarding
+    // flow — and made `context create` fail its own requiredOption check.
+    const program = buildProgram(manifest);
+    const globals = new Set(program.options.map((o) => o.long).filter(Boolean));
+
+    const offenders: string[] = [];
+    const walk = (cmd: (typeof program)["commands"][number], path: string) => {
+      for (const opt of cmd.options) {
+        if (opt.long && globals.has(opt.long)) offenders.push(`${path} ${opt.long}`);
+      }
+      for (const sub of cmd.commands) walk(sub, `${path} ${sub.name()}`);
+    };
+    for (const sub of program.commands) walk(sub, sub.name());
+
+    expect(offenders).toEqual([]);
+  });
+});

@@ -15,11 +15,33 @@ const require = createRequire(import.meta.url);
 const REQUIRED: Record<string, string[]> = require("./data/required-fields.json");
 const COLUMNS: Record<string, string[]> = require("./data/columns.json");
 
+/**
+ * Long flags declared on the root program.
+ *
+ * Commander binds a duplicated long flag to the ROOT command, so a generated
+ * option with one of these names would be unreachable from its own action.
+ * Dolibarr really does have a query parameter called `entity` (on
+ * `GET /login` and `GET /users/{id}/setGroup/{group}`), which collides with the
+ * global multi-company selector. Those get a `--query-` prefix instead.
+ */
+const RESERVED_FLAGS = new Set(["api-key", "base-url", "entity", "timeout", "json", "color", "version", "help"]);
+
+/** The flag name to expose for a query parameter, avoiding root collisions. */
+export function flagNameFor(paramName: string): string {
+  return RESERVED_FLAGS.has(paramName) ? `query-${paramName}` : paramName;
+}
+
+/** Commander camelCases on hyphens only. */
+function optionKeyFor(flagName: string): string {
+  return flagName.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+}
+
 function addQueryOptions(cmd: Command, op: OperationSpec): void {
   for (const param of op.query) {
-    const flag = `--${param.name} <value>`;
-    const description = param.description?.replace(/\s+/g, " ").slice(0, 120) ?? "";
-    cmd.addOption(new Option(flag, description));
+    const flagName = flagNameFor(param.name);
+    const renamed = flagName !== param.name ? ` (API parameter "${param.name}")` : "";
+    const description = (param.description?.replace(/\s+/g, " ").slice(0, 110) ?? "") + renamed;
+    cmd.addOption(new Option(`--${flagName} <value>`, description));
   }
 }
 
@@ -61,12 +83,13 @@ function buildOperationCommand(
 
       const query: Record<string, unknown> = {};
       for (const param of op.query) {
+        // Read under the exposed flag's key, which differs from the API
+        // parameter name when it had to be renamed to dodge a root global.
         // Commander camelCases on hyphens only, so underscore and camelCase
         // names (sqlfilters, contact_list, withLines) land under their literal
-        // key. A hyphenated name would not, so fall back to the camelCased form
-        // rather than silently dropping the value.
-        const camel = param.name.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
-        const value = opts[param.name] ?? opts[camel];
+        // key; a hyphenated one would not.
+        const key = optionKeyFor(flagNameFor(param.name));
+        const value = opts[key] ?? opts[param.name];
         if (value !== undefined) query[param.name] = value;
       }
 

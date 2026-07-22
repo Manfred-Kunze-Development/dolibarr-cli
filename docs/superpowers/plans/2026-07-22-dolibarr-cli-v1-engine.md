@@ -1752,7 +1752,7 @@ export function pickColumns(
  * reports only what was received. Never fabricate a total or a page count.
  */
 export function formatFooter(count: number, page: number): string {
-  return `${count} results (page ${page + 1})`;
+  return `${count} ${count === 1 ? "result" : "results"} (page ${page + 1})`;
 }
 
 export function formatList(
@@ -2068,11 +2068,33 @@ const require = createRequire(import.meta.url);
 const REQUIRED: Record<string, string[]> = require("./data/required-fields.json");
 const COLUMNS: Record<string, string[]> = require("./data/columns.json");
 
+/**
+ * Long flags declared on the root program.
+ *
+ * Commander binds a duplicated long flag to the ROOT command, so a generated
+ * option with one of these names would be unreachable from its own action.
+ * Dolibarr really does have a query parameter called `entity` (on
+ * `GET /login` and `GET /users/{id}/setGroup/{group}`), which collides with the
+ * global multi-company selector. Those get a `--query-` prefix instead.
+ */
+const RESERVED_FLAGS = new Set(["api-key", "base-url", "entity", "timeout", "json", "color", "version", "help"]);
+
+/** The flag name to expose for a query parameter, avoiding root collisions. */
+export function flagNameFor(paramName: string): string {
+  return RESERVED_FLAGS.has(paramName) ? `query-${paramName}` : paramName;
+}
+
+/** Commander camelCases on hyphens only. */
+function optionKeyFor(flagName: string): string {
+  return flagName.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+}
+
 function addQueryOptions(cmd: Command, op: OperationSpec): void {
   for (const param of op.query) {
-    const flag = `--${param.name} <value>`;
-    const description = param.description?.replace(/\s+/g, " ").slice(0, 120) ?? "";
-    cmd.addOption(new Option(flag, description));
+    const flagName = flagNameFor(param.name);
+    const renamed = flagName !== param.name ? ` (API parameter "${param.name}")` : "";
+    const description = (param.description?.replace(/\s+/g, " ").slice(0, 110) ?? "") + renamed;
+    cmd.addOption(new Option(`--${flagName} <value>`, description));
   }
 }
 
@@ -2114,12 +2136,13 @@ function buildOperationCommand(
 
       const query: Record<string, unknown> = {};
       for (const param of op.query) {
+        // Read under the exposed flag's key, which differs from the API
+        // parameter name when it had to be renamed to dodge a root global.
         // Commander camelCases on hyphens only, so underscore and camelCase
         // names (sqlfilters, contact_list, withLines) land under their literal
-        // key. A hyphenated name would not, so fall back to the camelCased form
-        // rather than silently dropping the value.
-        const camel = param.name.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
-        const value = opts[param.name] ?? opts[camel];
+        // key; a hyphenated one would not.
+        const key = optionKeyFor(flagNameFor(param.name));
+        const value = opts[key] ?? opts[param.name];
         if (value !== undefined) query[param.name] = value;
       }
 
@@ -2504,7 +2527,7 @@ import chalk from "chalk";
 import { createInterface } from "node:readline/promises";
 import {
   getStore, setContext, setActiveContext, getActiveContextName, getActiveContext,
-  getAllContexts, deleteContext, resolveConfig, isJsonOutput,
+  getAllContexts, deleteContext, resolveConfig, isJsonOutput, rootOf,
 } from "../lib/config.js";
 import { request } from "../lib/client.js";
 import { handleError } from "../lib/errors.js";
@@ -2519,10 +2542,23 @@ export function makeAuthCommand(): Command {
   cmd
     .command("login")
     .description("Store credentials for the active context")
-    .option("--api-key <key>", "API key (Setup → Users → API key in Dolibarr)")
-    .option("--base-url <url>", "Base URL, ending in /api/index.php")
-    .action(async (opts) => {
-      let { apiKey, baseUrl } = opts;
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Supply credentials non-interactively with the global options:",
+        "  dolibarr auth login --base-url https://host/api/index.php --api-key <key>",
+        "",
+      ].join("\n"),
+    )
+    .action(async (_opts, command: Command) => {
+      // --api-key and --base-url are declared on the ROOT program. Redeclaring
+      // them here would collide: Commander binds a duplicated long flag to the
+      // root, so this action's own opts() would come back empty and the flags
+      // would appear to be ignored.
+      const rootOpts = rootOf(command).opts();
+      let apiKey: string | undefined = rootOpts.apiKey;
+      let baseUrl: string | undefined = rootOpts.baseUrl;
       const current = getActiveContext();
 
       if ((!apiKey || !baseUrl) && !process.stdin.isTTY) {
@@ -2651,7 +2687,7 @@ import Table from "cli-table3";
 import { existsSync } from "node:fs";
 import {
   getAllContexts, getActiveContextName, setActiveContext, setContext,
-  deleteContext, isJsonOutput, manifestPathFor,
+  deleteContext, isJsonOutput, manifestPathFor, rootOf,
 } from "../lib/config.js";
 
 export function makeContextCommand(): Command {
@@ -2698,10 +2734,29 @@ export function makeContextCommand(): Command {
     .command("create")
     .description("Create a context")
     .argument("<name>", "Context name")
-    .requiredOption("--base-url <url>", "Base URL, ending in /api/index.php")
-    .requiredOption("--api-key <key>", "API key")
-    .action((name: string, opts: { baseUrl: string; apiKey: string }) => {
-      setContext(name, { baseUrl: opts.baseUrl, apiKey: opts.apiKey });
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Use the global --base-url and --api-key:",
+        "  dolibarr context create acme --base-url https://host/api/index.php --api-key <key>",
+        "",
+      ].join("\n"),
+    )
+    .action((name: string, _opts: unknown, command: Command) => {
+      // Read from the root: redeclaring these as local requiredOptions made
+      // Commander bind the values to the root and then fail its own required
+      // check, so `context create` could never succeed.
+      const { baseUrl, apiKey } = rootOf(command).opts();
+      if (!baseUrl || !apiKey) {
+        console.error(chalk.red("Both --base-url and --api-key are required."));
+        console.error(
+          chalk.dim("  dolibarr context create <name> --base-url <url> --api-key <key>"),
+        );
+        process.exitCode = 1;
+        return;
+      }
+      setContext(name, { baseUrl, apiKey });
       console.log(chalk.green(`Created context "${name}".`));
     });
 
@@ -2896,6 +2951,10 @@ const CRAFTED_MODULES = new Set<string>();
 
 export function buildProgram(manifest: Manifest | undefined): Command {
   const program = new Command();
+
+  // An unknown top-level name is usually a module this instance does not
+  // expose, or a typo. Commander's suggestion is more useful than a bare error.
+  program.showSuggestionAfterError();
 
   program
     .name("dolibarr")

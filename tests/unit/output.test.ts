@@ -26,6 +26,7 @@ describe("pickColumns", () => {
 describe("formatFooter", () => {
   it("never invents a total, because Dolibarr does not return one", () => {
     expect(formatFooter(20, 0)).toBe("20 results (page 1)");
+    expect(formatFooter(1, 0)).toBe("1 result (page 1)");
     expect(formatFooter(3, 2)).toBe("3 results (page 3)");
   });
 });

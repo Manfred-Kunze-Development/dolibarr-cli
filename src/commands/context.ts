@@ -5,7 +5,7 @@ import Table from "cli-table3";
 import { existsSync } from "node:fs";
 import {
   getAllContexts, getActiveContextName, setActiveContext, setContext,
-  deleteContext, isJsonOutput, manifestPathFor,
+  deleteContext, isJsonOutput, manifestPathFor, rootOf,
 } from "../lib/config.js";
 
 export function makeContextCommand(): Command {
@@ -52,10 +52,29 @@ export function makeContextCommand(): Command {
     .command("create")
     .description("Create a context")
     .argument("<name>", "Context name")
-    .requiredOption("--base-url <url>", "Base URL, ending in /api/index.php")
-    .requiredOption("--api-key <key>", "API key")
-    .action((name: string, opts: { baseUrl: string; apiKey: string }) => {
-      setContext(name, { baseUrl: opts.baseUrl, apiKey: opts.apiKey });
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Use the global --base-url and --api-key:",
+        "  dolibarr context create acme --base-url https://host/api/index.php --api-key <key>",
+        "",
+      ].join("\n"),
+    )
+    .action((name: string, _opts: unknown, command: Command) => {
+      // Read from the root: redeclaring these as local requiredOptions made
+      // Commander bind the values to the root and then fail its own required
+      // check, so `context create` could never succeed.
+      const { baseUrl, apiKey } = rootOf(command).opts();
+      if (!baseUrl || !apiKey) {
+        console.error(chalk.red("Both --base-url and --api-key are required."));
+        console.error(
+          chalk.dim("  dolibarr context create <name> --base-url <url> --api-key <key>"),
+        );
+        process.exitCode = 1;
+        return;
+      }
+      setContext(name, { baseUrl, apiKey });
       console.log(chalk.green(`Created context "${name}".`));
     });
 

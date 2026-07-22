@@ -4,7 +4,7 @@ import chalk from "chalk";
 import { createInterface } from "node:readline/promises";
 import {
   getStore, setContext, setActiveContext, getActiveContextName, getActiveContext,
-  getAllContexts, deleteContext, resolveConfig, isJsonOutput,
+  getAllContexts, deleteContext, resolveConfig, isJsonOutput, rootOf,
 } from "../lib/config.js";
 import { request } from "../lib/client.js";
 import { handleError } from "../lib/errors.js";
@@ -19,10 +19,23 @@ export function makeAuthCommand(): Command {
   cmd
     .command("login")
     .description("Store credentials for the active context")
-    .option("--api-key <key>", "API key (Setup → Users → API key in Dolibarr)")
-    .option("--base-url <url>", "Base URL, ending in /api/index.php")
-    .action(async (opts) => {
-      let { apiKey, baseUrl } = opts;
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Supply credentials non-interactively with the global options:",
+        "  dolibarr auth login --base-url https://host/api/index.php --api-key <key>",
+        "",
+      ].join("\n"),
+    )
+    .action(async (_opts, command: Command) => {
+      // --api-key and --base-url are declared on the ROOT program. Redeclaring
+      // them here would collide: Commander binds a duplicated long flag to the
+      // root, so this action's own opts() would come back empty and the flags
+      // would appear to be ignored.
+      const rootOpts = rootOf(command).opts();
+      let apiKey: string | undefined = rootOpts.apiKey;
+      let baseUrl: string | undefined = rootOpts.baseUrl;
       const current = getActiveContext();
 
       if ((!apiKey || !baseUrl) && !process.stdin.isTTY) {
