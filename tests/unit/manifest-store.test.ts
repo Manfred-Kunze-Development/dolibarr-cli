@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveManifestTo, loadManifestFrom } from "../../src/lib/manifest-store.js";
@@ -33,5 +33,37 @@ describe("manifest store", () => {
     saveManifestTo(path, manifest);
     writeFileSync(path, "{not json");
     expect(loadManifestFrom(path)).toBeUndefined();
+  });
+});
+
+describe("manifest store — durability and diagnostics", () => {
+  it("writes atomically and leaves no temp files behind", () => {
+    const path = join(dir, "atomic.json");
+    saveManifestTo(path, manifest);
+    const strays = readdirSync(dir).filter((f) => f.includes(".tmp"));
+    expect(strays).toEqual([]);
+  });
+
+  it("stores the manifest indented so users can inspect it", () => {
+    const path = join(dir, "pretty.json");
+    saveManifestTo(path, manifest);
+    expect(readFileSync(path, "utf8")).toContain("\n  ");
+  });
+
+  it("is silent when no manifest exists yet — that is the normal pre-sync state", () => {
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(loadManifestFrom(join(dir, "never-synced.json"))).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("warns when the manifest is corrupt, instead of silently offering fewer commands", () => {
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const path = join(dir, "corrupt.json");
+    writeFileSync(path, "{not json");
+    expect(loadManifestFrom(path)).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    expect(String(warn.mock.calls[0][0])).toMatch(/sync/i);
+    warn.mockRestore();
   });
 });
