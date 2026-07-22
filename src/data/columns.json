@@ -1,0 +1,16 @@
+{
+  "thirdparties": ["id", "name", "code_client", "email", "phone", "town"],
+  "invoices": ["id", "ref", "socid", "date", "total_ttc", "statut"],
+  "orders": ["id", "ref", "socid", "date", "total_ttc", "statut"],
+  "proposals": ["id", "ref", "socid", "date", "total_ttc", "statut"],
+  "products": ["id", "ref", "label", "price", "stock_reel", "status"],
+  "contacts": ["id", "lastname", "firstname", "email", "phone", "socid"],
+  "projects": ["id", "ref", "title", "socid", "dateo", "statut"],
+  "tasks": ["id", "ref", "label", "fk_project", "progress", "duration_effective"],
+  "tickets": ["id", "ref", "subject", "fk_statut", "severity_code", "datec"],
+  "users": ["id", "login", "lastname", "firstname", "email", "admin"],
+  "categories": ["id", "label", "type", "description"],
+  "warehouses": ["id", "ref", "label", "lieu", "statut"],
+  "supplierinvoices": ["id", "ref", "socid", "date", "total_ttc", "statut"],
+  "supplierorders": ["id", "ref", "socid", "date", "total_ttc", "statut"]
+}
