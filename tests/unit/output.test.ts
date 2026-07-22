@@ -35,3 +35,50 @@ describe("renderValue", () => {
   it("stringifies objects", () => expect(renderValue({ a: 1 })).toBe('{"a":1}'));
   it("passes scalars through", () => expect(renderValue(42)).toBe("42"));
 });
+
+describe("pickColumns — against real Dolibarr shapes", () => {
+  // Key order in a Dolibarr entity is PHP property declaration order, not
+  // business relevance. On a real 163-key thirdparty the first six keys are
+  // module/id/entity/import_key/array_languages/contacts_ids — four of them
+  // null — while `name` is at index 46. Declaration order is therefore useless
+  // as a fallback, and most modules have no hint list.
+  const realThirdparty = {
+    module: "societe",
+    id: 1,
+    entity: 1,
+    import_key: null,
+    array_options: [],
+    array_languages: null,
+    contacts_ids: null,
+    name: "Output Rendering Test Co",
+    code_client: null,
+    email: null,
+    town: null,
+    status: 1,
+  };
+
+  it("surfaces recognisable identifying fields when no hints are configured", () => {
+    const columns = pickColumns([realThirdparty], undefined, undefined);
+    expect(columns).toContain("name");
+    expect(columns).toContain("id");
+    expect(columns).not.toContain("import_key");
+    expect(columns).not.toContain("array_languages");
+  });
+
+  it("still honours explicit hints over the heuristic", () => {
+    expect(pickColumns([realThirdparty], ["town", "status"], undefined)).toEqual(["town", "status"]);
+  });
+
+  it("considers keys from every row, not only the first", () => {
+    // A key absent from row 0 would otherwise be invisible for the whole table.
+    const rows = [{ id: 1 }, { id: 2, ref: "FA-2" }];
+    expect(pickColumns(rows, undefined, undefined)).toContain("ref");
+  });
+
+  it("never picks a column that is null in every row", () => {
+    const columns = pickColumns([realThirdparty], undefined, undefined);
+    for (const c of columns) {
+      expect(realThirdparty[c as keyof typeof realThirdparty]).not.toBeNull();
+    }
+  });
+});

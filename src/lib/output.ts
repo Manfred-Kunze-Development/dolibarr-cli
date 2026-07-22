@@ -14,6 +14,22 @@ export function renderValue(value: unknown): string {
   return String(value);
 }
 
+/**
+ * Fields worth showing first when a module has no configured hint list.
+ *
+ * Dolibarr key order is PHP property declaration order, which is close to
+ * useless for display: a real 163-key thirdparty starts
+ * module/id/entity/import_key/array_languages/contacts_ids — four of them null —
+ * with `name` at index 46. Most modules have no hint list, so without this the
+ * table would be blank columns for almost everything.
+ */
+const PREFERRED_FALLBACK = [
+  "id", "ref", "ref_ext", "label", "name", "title", "subject", "code",
+  "code_client", "login", "socid", "fk_soc", "fk_project", "email", "town",
+  "date", "datec", "date_creation", "qty", "price", "total_ttc",
+  "status", "statut", "active",
+];
+
 export function pickColumns(
   rows: Row[],
   hints: string[] | undefined,
@@ -21,20 +37,30 @@ export function pickColumns(
 ): string[] {
   if (override && override.length > 0) return override;
   if (rows.length === 0) return [];
-  const present = new Set<string>();
-  for (const row of rows) for (const key of Object.keys(row)) present.add(key);
+
+  // Union across all rows: a key missing from row 0 would otherwise be
+  // invisible for the entire table.
+  const scalarKeys = new Set<string>();
+  for (const row of rows) {
+    for (const [key, value] of Object.entries(row)) {
+      if (value === null || typeof value !== "object") scalarKeys.add(key);
+    }
+  }
+
+  const hasValue = (key: string) =>
+    rows.some((r) => r[key] !== undefined && r[key] !== null && r[key] !== "");
 
   if (hints && hints.length > 0) {
-    const chosen = hints.filter((h) => present.has(h) && rows.some((r) => r[h] !== undefined));
+    const chosen = hints.filter((h) => scalarKeys.has(h) && rows.some((r) => r[h] !== undefined));
     if (chosen.length > 0) return chosen;
   }
 
-  return Object.keys(rows[0])
-    .filter((key) => {
-      const value = rows[0][key];
-      return value === null || typeof value !== "object";
-    })
-    .slice(0, MAX_FALLBACK_COLUMNS);
+  const preferred = PREFERRED_FALLBACK.filter((key) => scalarKeys.has(key) && hasValue(key));
+  if (preferred.length > 0) return preferred.slice(0, MAX_FALLBACK_COLUMNS);
+
+  // Nothing recognisable — prefer columns that at least carry data.
+  const populated = [...scalarKeys].filter(hasValue);
+  return (populated.length > 0 ? populated : [...scalarKeys]).slice(0, MAX_FALLBACK_COLUMNS);
 }
 
 /**
@@ -72,7 +98,10 @@ export function formatDetail(record: Row, command: Command): void {
     console.log(JSON.stringify(record, null, 2));
     return;
   }
-  const table = new Table();
+  // wordWrap matters here: real records carry nested blobs such as `rights`,
+  // which stringify to long unbroken lines that would otherwise overrun the
+  // terminal width instead of wrapping.
+  const table = new Table({ wordWrap: true });
   for (const [key, value] of Object.entries(record)) {
     table.push({ [chalk.cyan(key)]: renderValue(value) });
   }
