@@ -2000,7 +2000,7 @@ Expected: FAIL — cannot resolve `../../src/registry.js`.
 // src/registry.ts
 import { Command, Option } from "commander";
 import type { Manifest, OperationSpec } from "./manifest.js";
-import { resolveConfig, rootOf } from "./lib/config.js";
+import { resolveConfig, rootOf, isJsonOutput } from "./lib/config.js";
 import { request } from "./lib/client.js";
 import { buildBody, checkRequired } from "./lib/body.js";
 import { formatResult } from "./lib/output.js";
@@ -2029,7 +2029,11 @@ function addBodyOptions(cmd: Command): void {
     .option("--extrafield <key=value...>", "Set a custom field (maps to array_options)");
 }
 
-function buildOperationCommand(module: string, op: OperationSpec): Command {
+function buildOperationCommand(
+  module: string,
+  op: OperationSpec,
+  availableModules: string[],
+): Command {
   const cmd = new Command(op.command);
   if (op.summary) cmd.description(op.summary.replace(/\s*🔐\s*$/, "").trim());
 
@@ -2056,7 +2060,12 @@ function buildOperationCommand(module: string, op: OperationSpec): Command {
 
       const query: Record<string, unknown> = {};
       for (const param of op.query) {
-        const value = opts[param.name];
+        // Commander camelCases on hyphens only, so underscore and camelCase
+        // names (sqlfilters, contact_list, withLines) land under their literal
+        // key. A hyphenated name would not, so fall back to the camelCased form
+        // rather than silently dropping the value.
+        const camel = param.name.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+        const value = opts[param.name] ?? opts[camel];
         if (value !== undefined) query[param.name] = value;
       }
 
@@ -2085,7 +2094,11 @@ function buildOperationCommand(module: string, op: OperationSpec): Command {
       const page = query.page !== undefined ? Number(query.page) : 0;
       formatResult(result, command, { hints: COLUMNS[module], columns, page });
     } catch (err) {
-      handleError(err, Boolean((command.parent?.parent ?? command).opts().json));
+      // isJsonOutput walks to the root rather than assuming a fixed depth, and
+      // matches what the success path uses. availableModules must be passed:
+      // without it every 404 claims the module is disabled, because
+      // ![].includes(x) is always true.
+      handleError(err, isJsonOutput(command), availableModules);
     }
   });
 
@@ -2103,10 +2116,13 @@ export function registerGeneratedCommands(
   manifest: Manifest,
   claimed: Set<string>,
 ): void {
+  const availableModules = Object.keys(manifest.modules);
   for (const [module, { operations }] of Object.entries(manifest.modules)) {
     if (claimed.has(module)) continue;
     const group = new Command(module).description(`${operations.length} operations`);
-    for (const op of operations) group.addCommand(buildOperationCommand(module, op));
+    for (const op of operations) {
+      group.addCommand(buildOperationCommand(module, op, availableModules));
+    }
     program.addCommand(group);
   }
 }
