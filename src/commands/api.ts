@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { resolveConfig, isJsonOutput } from "../lib/config.js";
 import { request } from "../lib/client.js";
 import { buildBody } from "../lib/body.js";
+import { onceOnly } from "../registry.js";
 import { formatResult } from "../lib/output.js";
 import { handleError } from "../lib/errors.js";
 
@@ -20,7 +21,7 @@ export function makeApiCommand(): Command {
     .argument("<method>", "GET, POST, PUT, DELETE or PATCH")
     .argument("<path>", "Path relative to the API root, e.g. /thirdparties/1")
     .option("--query <key=value...>", "Query parameter")
-    .option("--data <json>", "Request body as JSON, or @file.json")
+    .option("--data <json>", "Request body as JSON, or @file.json", onceOnly("--data"))
     .option("--set <key=value...>", "Set a body field; dot paths supported")
     .action(async (method: string, path: string, opts, command: Command) => {
       try {

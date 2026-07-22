@@ -44,7 +44,11 @@ function assignPath(target: Json, path: string, value: unknown): void {
     }
   }
 
-  const isIndex = (key: string) => /^\d+$/.test(key);
+  // Beyond this, JS stores the key as a NAMED property on the array and
+  // JSON.stringify silently drops it — the same class of silent loss as the
+  // array_options bug.
+  const MAX_ARRAY_INDEX = 2 ** 32 - 2;
+  const isIndex = (key: string) => /^\d+$/.test(key) && Number(key) <= MAX_ARRAY_INDEX;
 
   let cursor: Json = target;
   for (const [depth, part] of parts.slice(0, -1).entries()) {
@@ -73,8 +77,20 @@ function assignPath(target: Json, path: string, value: unknown): void {
   }
 
   const last = parts[parts.length - 1];
-  if (Array.isArray(cursor) && !isIndex(last)) {
-    throw new Error(`"${path}" indexes an array, so "${last}" must be a number.`);
+  if (Array.isArray(cursor)) {
+    if (!isIndex(last)) {
+      throw new Error(`"${path}" indexes an array, so "${last}" must be a valid index.`);
+    }
+    // Bound-check like the intermediate segments do. Without this,
+    // `--set lines.9=x` on a 2-element array padded it with seven nulls and
+    // shipped fabricated line items to the ERP.
+    const index = Number(last);
+    const length = (cursor as unknown as unknown[]).length;
+    if (index > length) {
+      throw new Error(
+        `"${path}" would leave a gap: the array has ${length} element(s), so ${index} is out of range.`,
+      );
+    }
   }
   cursor[last] = value;
 }

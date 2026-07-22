@@ -90,7 +90,8 @@ export function makeContextCommand(): Command {
       // the next write would land on a different customer's instance.
       const after = getActiveContextName();
       if (after !== before) {
-        console.log(chalk.yellow(`Active context is now "${after}".`));
+        // stderr, like the other "you may now be pointed elsewhere" warnings.
+        console.error(chalk.yellow(`Active context is now "${after}".`));
       }
     });
 

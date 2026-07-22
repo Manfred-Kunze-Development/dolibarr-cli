@@ -124,7 +124,22 @@ describe("buildBody — array and extrafield integrity", () => {
       .toEqual({ array_options: { options_a: "1", options_b: "2" } });
   });
 
-  it("rejects a second --data instead of silently taking the last", () => {
-    expect(() => buildBody({ data: ['{"a":1}', '{"b":2}'] as unknown as string })).toThrow();
+  it("refuses to write past the end of an array instead of padding with nulls", () => {
+    // The intermediate segments were bounds-checked but the final one was not,
+    // so `--set lines.9=x` on a 2-element array shipped seven fabricated null
+    // line items to the ERP.
+    expect(() => buildBody({ data: '{"lines":[{"desc":"a"},{"desc":"b"}]}', set: ["lines.9=x"] }))
+      .toThrow(/out of range/i);
+    // Appending to the end is still allowed.
+    expect(buildBody({ data: '{"lines":[1,2]}', set: ["lines.2=3"] }))
+      .toEqual({ lines: [1, 2, 3] });
+  });
+
+  it("rejects an index too large to be stored as an array element", () => {
+    // /^\d+$/ accepted these, but JS stores them as named properties and
+    // JSON.stringify drops them — silent loss, the same class as the
+    // array_options bug.
+    expect(() => buildBody({ data: '{"lines":[1]}', set: ["lines.4294967296=x"] }))
+      .toThrow(/valid index/i);
   });
 });

@@ -156,3 +156,35 @@ describe("module group name collisions", () => {
     expect(names).toContain("api-module");
   });
 });
+
+describe("repeated --data", () => {
+  it("is an error rather than silently taking the last", async () => {
+    // The previous test for this asserted on an array Commander can never
+    // produce, and passed because of a TypeError. It certified nothing.
+    const program = new Command();
+    registerGeneratedCommands(program, manifest, new Set());
+    program.exitOverride();
+
+    const invoices = program.commands.find((c) => c.name() === "invoices")!;
+    const create = invoices.commands.find((c) => c.name() === "create")!;
+    create.exitOverride();
+
+    await expect(
+      program.parseAsync(["invoices", "create", "--data", '{"a":1}', "--data", '{"b":2}'], {
+        from: "user",
+      }),
+    ).rejects.toThrow(/only be given once/i);
+  });
+
+  it("reserves the implicit help command so a module cannot shadow it", () => {
+    const collided = {
+      dolibarrVersion: null,
+      fetchedAt: "x",
+      basePath: "",
+      modules: { help: { operations: manifest.modules.invoices.operations.slice(0, 1) } },
+    };
+    const program = new Command();
+    registerGeneratedCommands(program, collided as never, new Set());
+    expect(program.commands.map((c) => c.name())).toContain("help-module");
+  });
+});

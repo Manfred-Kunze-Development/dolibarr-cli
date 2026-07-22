@@ -62,9 +62,22 @@ function addQueryOptions(cmd: Command, op: OperationSpec): void {
   }
 }
 
+/**
+ * Reject a repeated --data rather than silently taking the last.
+ *
+ * Commander's non-variadic options let the last occurrence win, which for a
+ * whole request body means quietly discarding the one the user probably meant.
+ */
+export function onceOnly(flag: string) {
+  return (value: string, previous: string | undefined): string => {
+    if (previous !== undefined) throw new Error(`${flag} may only be given once.`);
+    return value;
+  };
+}
+
 function addBodyOptions(cmd: Command): void {
   cmd
-    .option("--data <json>", "Request body as JSON, or @file.json to read from disk")
+    .option("--data <json>", "Request body as JSON, or @file.json to read from disk", onceOnly("--data"))
     .option("--set <key=value...>", "Set a body field; dot paths supported. Applied over --data")
     .option("--extrafield <key=value...>", "Set a custom field (maps to array_options)");
 }
@@ -167,7 +180,10 @@ export function registerGeneratedCommands(
   // every invocation including --help and sync, leaving no way to recover except
   // deleting the manifest by hand. Custom modules choose their own tag, so this
   // is reachable in the field.
-  const taken = new Set(program.commands.map((c) => c.name()));
+  // Includes "help": Commander creates its help command lazily, so it is absent
+  // from program.commands and a module tagged `help` would shadow it silently
+  // rather than colliding.
+  const taken = new Set([...program.commands.map((c) => c.name()), "help"]);
 
   for (const [module, { operations }] of Object.entries(manifest.modules)) {
     if (claimed.has(module)) continue;
