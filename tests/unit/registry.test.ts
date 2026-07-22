@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import { buildManifest } from "../../src/manifest.js";
-import { registerGeneratedCommands, isRootCreate } from "../../src/registry.js";
+import { registerGeneratedCommands, isRootCreate, operationKey, commandNamesFor } from "../../src/registry.js";
 
 const spec = JSON.parse(readFileSync("openapi/swagger-23.0.3.json", "utf8"));
 const manifest = buildManifest(spec, { fetchedAt: "2026-07-22T00:00:00Z" });
@@ -56,10 +56,25 @@ describe("registerGeneratedCommands", () => {
     expect(list.options.map((o) => o.long)).not.toContain("--data");
   });
 
-  it("skips modules already claimed by a crafted command", () => {
+  it("skips operations already claimed by a crafted command", () => {
+    // Claimed by METHOD+path, not module: operationId is not unique, and a
+    // crafted module may replace only part of a group.
+    const invoices = manifest.modules.invoices.operations;
+    const claimed = new Set(invoices.map(operationKey));
     const program = new Command();
-    registerGeneratedCommands(program, manifest, new Set(["invoices"]));
+    registerGeneratedCommands(program, manifest, claimed);
     expect(program.commands.map((c) => c.name())).not.toContain("invoices");
+  });
+
+  it("keeps the unclaimed half of a partially crafted module", () => {
+    const invoices = manifest.modules.invoices.operations;
+    const list = invoices.find((o) => o.command === "list")!;
+    const program = new Command();
+    registerGeneratedCommands(program, manifest, new Set([operationKey(list)]));
+    const group = program.commands.find((c) => c.name() === "invoices")!;
+    const subs = group.commands.map((c) => c.name());
+    expect(subs).not.toContain("list");
+    expect(subs).toContain("create");
   });
 });
 
@@ -154,6 +169,8 @@ describe("module group name collisions", () => {
     const names = program.commands.map((c) => c.name());
     expect(names).toContain("api");
     expect(names).toContain("api-module");
+    // `modules` must report the name the user has to type.
+    expect(commandNamesFor(collided as never, ["api"]).get("api")).toBe("api-module");
   });
 });
 

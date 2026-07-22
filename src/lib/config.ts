@@ -52,11 +52,6 @@ export function getStore(): Conf<Store> {
   return cachedStore;
 }
 
-/** Test seam: drop the cached store so a new DOLIBARR_CONFIG_DIR takes effect. */
-export function resetStoreForTesting(): void {
-  cachedStore = undefined;
-}
-
 const CONTEXT_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 export function validateContextName(name: string): void {
@@ -138,7 +133,17 @@ function readLocalFile(): Partial<ContextEntry> {
   const path = resolve(process.cwd(), ".dolibarr");
   if (!existsSync(path)) return {};
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      // Valid JSON of the wrong shape was previously accepted and then read as
+      // undefined, or crashed with a raw TypeError on null.
+      process.stderr.write(
+        `[warning] Ignoring ${path}: expected a JSON object with baseUrl/apiKey.
+`,
+      );
+      return {};
+    }
+    return parsed as Partial<ContextEntry>;
   } catch {
     // Silently ignoring this sent commands to the active context's instance
     // instead. The whole point of a directory-scoped dotfile is "in here, talk

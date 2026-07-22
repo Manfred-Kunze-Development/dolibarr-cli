@@ -98,9 +98,12 @@ dolibarr api POST /thirdparties --data '{"name":"ACME"}'
 | `--json` | Raw JSON on stdout |
 | `--no-color` | Disable colour |
 
-Global options must come **before** the subcommand: `dolibarr --entity 3 users set-group 1 2`.
-Two Dolibarr endpoints have their own query parameter named `entity`, which is exposed as
-`--query-entity` to keep the two distinct.
+Global options work before or after the subcommand. Two Dolibarr endpoints have their own query
+parameter named `entity`, which is exposed as `--query-entity` so it stays distinct from the global
+`--entity`.
+
+Deletions prompt for confirmation. Pass `--yes` to skip it; without a terminal, `--yes` is required
+rather than assumed.
 
 Configuration resolves in this order: CLI flags → environment (`DOLIBARR_API_KEY`,
 `DOLIBARR_BASE_URL`, `DOLIBARR_ENTITY`) → a `.dolibarr` JSON file in the working directory → the

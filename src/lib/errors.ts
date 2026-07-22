@@ -71,6 +71,8 @@ export function handleError(err: unknown, json: boolean, availableModules: strin
   } else if (err instanceof Error) {
     if (json) console.error(JSON.stringify({ error: err.name, message: err.message }));
     else console.error(chalk.red(`Error: ${err.message}`));
+  } else if (json) {
+    console.error(JSON.stringify({ error: "UnknownError", message: String(err) }));
   } else {
     console.error(chalk.red(`Unknown error: ${String(err)}`));
   }

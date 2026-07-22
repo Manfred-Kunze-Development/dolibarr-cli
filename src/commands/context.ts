@@ -3,6 +3,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import Table from "cli-table3";
 import { existsSync } from "node:fs";
+import { removeManifest } from "../lib/manifest-store.js";
 import {
   getAllContexts, getActiveContextName, setActiveContext, setContext,
   deleteContext, isJsonOutput, manifestPathFor, rootOf,
@@ -85,6 +86,7 @@ export function makeContextCommand(): Command {
     .action((name: string) => {
       const before = getActiveContextName();
       deleteContext(name);
+      removeManifest(name);
       console.log(chalk.green(`Deleted context "${name}".`));
       // Deleting the active context promotes an arbitrary survivor. Unannounced,
       // the next write would land on a different customer's instance.

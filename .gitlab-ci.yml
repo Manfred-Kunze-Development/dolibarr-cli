@@ -55,7 +55,11 @@ test:unit:
         [ "$status" = "unhealthy" ] && exit 1
         sleep 10
       done
-    - npm run test:contract
+    # A skipped suite exits 0, so assert tests actually ran. Without this the
+    # health loop timing out silently turned the whole matrix green.
+    - npm run test:contract 2>&1 | tee contract.log
+    - grep -qE "Tests +[0-9]+ passed" contract.log || (echo "Contract tests did not run" && exit 1)
+    - grep -q "skipped" contract.log && (echo "Contract tests were skipped" && exit 1) || true
   after_script:
     - docker compose --profile $DOLI_PROFILE down -v
   rules:

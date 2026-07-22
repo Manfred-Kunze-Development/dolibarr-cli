@@ -21,7 +21,9 @@ function coerce(raw: string): unknown {
   if (raw === "true") return true;
   if (raw === "false") return false;
   if (raw === "null") return null;
-  if (raw !== "" && !Number.isNaN(Number(raw)) && String(Number(raw)) === raw) {
+  // Number.isFinite, not !isNaN: "Infinity" round-trips through String(Number())
+  // but JSON.stringify emits null for it, silently sending a null field.
+  if (raw !== "" && Number.isFinite(Number(raw)) && String(Number(raw)) === raw) {
     return Number(raw);
   }
   return raw;

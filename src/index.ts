@@ -15,10 +15,14 @@ const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string };
 
 /**
- * Module names provided by hand-crafted commands. Generated commands for these
- * are suppressed. Empty in v1 -- the engine ships before any crafted module.
+ * `METHOD /path` keys already provided by hand-crafted commands; the generated
+ * command for each is suppressed. Keyed on method+path rather than module or
+ * operationId — operationId is not unique in real Dolibarr specs, and a crafted
+ * module may replace only part of a group.
+ *
+ * Empty in v1: the engine ships before any crafted module.
  */
-const CRAFTED_MODULES = new Set<string>();
+const CRAFTED_OPERATIONS = new Set<string>();
 
 export function buildProgram(manifest: Manifest | undefined): Command {
   const program = new Command();
@@ -46,7 +50,7 @@ export function buildProgram(manifest: Manifest | undefined): Command {
   program.addCommand(makeApiCommand());
 
   if (manifest) {
-    registerGeneratedCommands(program, manifest, CRAFTED_MODULES);
+    registerGeneratedCommands(program, manifest, CRAFTED_OPERATIONS);
   } else {
     program.addHelpText(
       "after",

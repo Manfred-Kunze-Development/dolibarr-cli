@@ -4,11 +4,17 @@ import chalk from "chalk";
 import Table from "cli-table3";
 import { getActiveContextName, isJsonOutput } from "../lib/config.js";
 import { loadManifest } from "../lib/manifest-store.js";
+import { commandNamesFor, BUILTIN_COMMANDS } from "../registry.js";
+import { makeSyncCommand } from "./sync.js";
 
 export function makeModulesCommand(): Command {
   return new Command("modules")
     .description("List the modules the connected instance exposes")
-    .action((_opts, command: Command) => {
+    .option("--refresh", "Re-run sync before listing")
+    .action(async (opts, command: Command) => {
+      if (opts.refresh) {
+        await makeSyncCommand().parseAsync(["sync"], { from: "user" });
+      }
       const manifest = loadManifest();
       if (!manifest) {
         // Exit non-zero in BOTH formats: a script doing
@@ -24,8 +30,14 @@ export function makeModulesCommand(): Command {
         return;
       }
 
+      // Report the command name actually exposed, which differs when a module
+      // tag collided with a built-in and had to be renamed.
+      const exposed = commandNamesFor(manifest, BUILTIN_COMMANDS);
       const rows = Object.entries(manifest.modules)
-        .map(([name, mod]) => ({ module: name, operations: mod.operations.length }))
+        .map(([name, mod]) => ({
+          module: exposed.get(name) ?? name,
+          operations: mod.operations.length,
+        }))
         .sort((a, b) => a.module.localeCompare(b.module));
 
       if (isJsonOutput(command)) {

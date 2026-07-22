@@ -6,7 +6,8 @@ import { resolveConfig, rootOf, isJsonOutput, timeoutMsFrom } from "./lib/config
 import { request } from "./lib/client.js";
 import { buildBody, checkRequired } from "./lib/body.js";
 import { formatResult } from "./lib/output.js";
-import { handleError } from "./lib/errors.js";
+import { handleError, DolibarrApiError } from "./lib/errors.js";
+import { confirm } from "./lib/prompt.js";
 import { createRequire } from "node:module";
 
 // Loaded via createRequire rather than an ESM JSON import: import attributes
@@ -45,6 +46,17 @@ function optionKeyFor(flagName: string): string {
  * the entity itself. Sub-resource and action POSTs (POST /invoices/{id}/lines,
  * POST /invoices/{id}/settopaid) take entirely different payloads.
  */
+/**
+ * True for list-shaped reads — a GET offering the pagination parameters.
+ *
+ * Dolibarr answers an empty result set with 404 "No third parties found", so
+ * without this a filter that matches nothing is reported as an error with a
+ * "verify the ID" hint, and a script gets a non-zero exit instead of [].
+ */
+export function isListOperation(op: OperationSpec): boolean {
+  return op.method === "get" && op.query.some((p) => p.name === "limit");
+}
+
 export function isRootCreate(op: OperationSpec): boolean {
   return (
     op.method === "post" &&
@@ -57,8 +69,15 @@ function addQueryOptions(cmd: Command, op: OperationSpec): void {
   for (const param of op.query) {
     const flagName = flagNameFor(param.name);
     const renamed = flagName !== param.name ? ` (API parameter "${param.name}")` : "";
-    const description = (param.description?.replace(/\s+/g, " ").slice(0, 110) ?? "") + renamed;
-    cmd.addOption(new Option(`--${flagName} <value>`, description));
+    const raw = param.description?.replace(/\s+/g, " ") ?? "";
+    // Truncate on a word boundary with an ellipsis rather than mid-word.
+    const trimmed =
+      raw.length > 110 ? raw.slice(0, raw.lastIndexOf(" ", 110) > 40 ? raw.lastIndexOf(" ", 110) : 110) + "…" : raw;
+    const option = new Option(`--${flagName} <value>`, trimmed + renamed);
+    // The spec marks 20 query parameters required; without this the server
+    // answers 400 for a request the CLI could have rejected locally.
+    if (param.required) option.makeOptionMandatory();
+    cmd.addOption(option);
   }
 }
 
@@ -88,7 +107,7 @@ function buildOperationCommand(
   availableModules: string[],
 ): Command {
   const cmd = new Command(op.command);
-  if (op.summary) cmd.description(op.summary.replace(/\s*🔐\s*$/, "").trim());
+  if (op.summary) cmd.description(op.summary.replace(/\s*[🔐🔓]\s*$/u, "").trim());
 
   for (const param of op.pathParams) {
     cmd.argument(`<${param.name}>`, param.description ?? `${param.name} path parameter`);
@@ -96,6 +115,9 @@ function buildOperationCommand(
   addQueryOptions(cmd, op);
   if (op.hasBody) addBodyOptions(cmd);
   cmd.option("--columns <list>", "Comma-separated columns to display");
+  if (op.method === "delete") {
+    cmd.option("--yes", "Skip the confirmation prompt");
+  }
 
   cmd.action(async (...args: unknown[]) => {
     // Commander passes: ...positionals, options, command
@@ -105,6 +127,20 @@ function buildOperationCommand(
 
     try {
       const config = resolveConfig(command);
+
+      // Deletions against a live ERP are irreversible and the CLI takes
+      // positional ids, so consent is required rather than assumed.
+      if (op.method === "delete" && opts.yes !== true) {
+        const target = (args.slice(0, op.pathParams.length) as string[]).join("/");
+        const confirmed = await confirm(
+          `Delete ${module} ${target} on ${config.baseUrl}? This cannot be undone.`,
+        );
+        if (!confirmed) {
+          console.error("Aborted.");
+          process.exitCode = 1;
+          return;
+        }
+      }
 
       const pathParams: Record<string, string> = {};
       op.pathParams.forEach((param, index) => {
@@ -149,8 +185,23 @@ function buildOperationCommand(
 
       const columns = typeof opts.columns === "string" ? opts.columns.split(",") : undefined;
       const page = query.page !== undefined ? Number(query.page) : 0;
-      formatResult(result, command, { hints: COLUMNS[module], columns, page });
+      formatResult(result, command, {
+        hints: COLUMNS[module],
+        columns,
+        page,
+        scalarLabel: isRootCreate(op) ? "Created id" : undefined,
+      });
     } catch (err) {
+      // An empty result set is not an error. Dolibarr signals it with 404.
+      if (
+        isListOperation(op) &&
+        err instanceof DolibarrApiError &&
+        err.status === 404
+      ) {
+        const columns = typeof opts.columns === "string" ? opts.columns.split(",") : undefined;
+        formatResult([], command, { hints: COLUMNS[module], columns });
+        return;
+      }
       // isJsonOutput walks to the root rather than assuming a fixed depth, and
       // matches what the success path uses. availableModules must be passed:
       // without it every 404 claims the module is disabled, because
@@ -162,11 +213,49 @@ function buildOperationCommand(
   return cmd;
 }
 
+/** Command names the program owns before any module is registered. */
+export const BUILTIN_COMMANDS = ["auth", "context", "config", "sync", "modules", "api", "help"];
+
+/**
+ * Resolve every module tag to the command name actually exposed.
+ *
+ * Deterministic and shared, so `dolibarr modules` reports the name a user must
+ * type rather than the raw tag. Commander throws on a duplicate command and
+ * registration happens before parseAsync, so an unresolved clash takes down
+ * every invocation including --help.
+ */
+export function commandNamesFor(
+  manifest: Manifest,
+  reserved: Iterable<string> = BUILTIN_COMMANDS,
+): Map<string, string> {
+  const taken = new Set(reserved);
+  const names = new Map<string, string>();
+  for (const module of Object.keys(manifest.modules)) {
+    let name = sanitizeCommand(module) || "module";
+    if (taken.has(name)) {
+      const base = `${name}-module`;
+      name = base;
+      let suffix = 2;
+      while (taken.has(name)) name = `${base}-${suffix++}`;
+    }
+    taken.add(name);
+    names.set(module, name);
+  }
+  return names;
+}
+
+/** Stable identity of an operation: operationId is NOT unique. */
+export function operationKey(op: OperationSpec): string {
+  return `${op.method.toUpperCase()} ${op.path}`;
+}
+
 /**
  * Register one command group per module in the manifest.
  *
- * `claimed` holds module names already provided by hand-crafted commands; those
- * are skipped so a crafted module fully replaces its generated counterpart.
+ * `claimed` holds `METHOD /path` keys already provided by hand-crafted
+ * commands. Keyed on method+path rather than module or operationId, because
+ * operationId is not unique in real Dolibarr specs and a crafted module may
+ * replace only part of a group.
  */
 export function registerGeneratedCommands(
   program: Command,
@@ -174,36 +263,22 @@ export function registerGeneratedCommands(
   claimed: Set<string>,
 ): void {
   const availableModules = Object.keys(manifest.modules);
-
-  // Names the program already owns. Commander THROWS on a duplicate command, and
-  // this runs before parseAsync, so a module tagged e.g. `api` would take down
-  // every invocation including --help and sync, leaving no way to recover except
-  // deleting the manifest by hand. Custom modules choose their own tag, so this
-  // is reachable in the field.
-  // Includes "help": Commander creates its help command lazily, so it is absent
-  // from program.commands and a module tagged `help` would shadow it silently
-  // rather than colliding.
-  const taken = new Set([...program.commands.map((c) => c.name()), "help"]);
+  const exposed = commandNamesFor(manifest, program.commands.map((c) => c.name()).concat("help"));
 
   for (const [module, { operations }] of Object.entries(manifest.modules)) {
-    if (claimed.has(module)) continue;
+    const remaining = operations.filter((op) => !claimed.has(operationKey(op)));
+    if (remaining.length === 0) continue;
 
-    let name = sanitizeCommand(module) || "module";
-    if (taken.has(name)) {
-      const alternative = `${name}-module`;
+    const name = exposed.get(module) ?? module;
+    if (name !== module) {
       process.stderr.write(
-        `[warning] The instance exposes a module named "${module}", which clashes with a built-in ` +
-          `command. Exposing it as "${alternative}".
+        `[warning] Module "${module}" clashes with another command; exposing it as "${name}".
 `,
       );
-      name = alternative;
-      let suffix = 2;
-      while (taken.has(name)) name = `${alternative}-${suffix++}`;
     }
-    taken.add(name);
 
-    const group = new Command(name).description(`${operations.length} operations`);
-    for (const op of operations) {
+    const group = new Command(name).description(`${remaining.length} operations`);
+    for (const op of remaining) {
       group.addCommand(buildOperationCommand(module, op, availableModules));
     }
     program.addCommand(group);

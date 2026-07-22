@@ -70,3 +70,13 @@ export function saveManifest(manifest: Manifest, contextName = getActiveContextN
 export function loadManifest(contextName = getActiveContextName()): Manifest | undefined {
   return loadManifestFrom(manifestPathFor(contextName));
 }
+
+/**
+ * Drop a context's cached command tree.
+ *
+ * Without this, recreating a context under the same name inherits the previous
+ * instance's commands — a stale tree describing a different customer's ERP.
+ */
+export function removeManifest(contextName: string): void {
+  rmSync(manifestPathFor(contextName), { force: true });
+}

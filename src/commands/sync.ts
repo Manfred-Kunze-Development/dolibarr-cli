@@ -80,6 +80,28 @@ export async function fetchSpec(
   return spec as RawSpec;
 }
 
+/** Phrase --spec failures in CLI terms, as buildBody does for --data. */
+function readSpecFile(file: string): RawSpec {
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch (err) {
+    throw new Error(
+      `--spec file could not be read: ${file} (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`--spec file is not valid JSON: ${file}`);
+  }
+  if (!parsed || typeof parsed !== "object" || typeof (parsed as RawSpec).paths !== "object") {
+    throw new Error(`--spec file is not a Swagger document (no "paths"): ${file}`);
+  }
+  return parsed as RawSpec;
+}
+
 async function fetchVersion(config: ResolvedConfig, timeoutMs?: number): Promise<string | null> {
   try {
     const status = (await request(config, { method: "get", path: "/status", timeoutMs })) as any;
@@ -101,9 +123,7 @@ export function makeSyncCommand(): Command {
 
         let spec: RawSpec;
         try {
-          spec = opts.spec
-            ? (JSON.parse(readFileSync(opts.spec, "utf8")) as RawSpec)
-            : await fetchSpec(config, { timeoutMs });
+          spec = opts.spec ? readSpecFile(opts.spec) : await fetchSpec(config, { timeoutMs });
         } catch (err) {
           spinner?.fail();
           throw err;

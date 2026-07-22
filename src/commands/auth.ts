@@ -7,6 +7,7 @@ import {
   getAllContexts, deleteContext, resolveConfig, isJsonOutput, rootOf,
 } from "../lib/config.js";
 import { request } from "../lib/client.js";
+import { removeManifest } from "../lib/manifest-store.js";
 import { handleError } from "../lib/errors.js";
 
 function maskKey(key: string): string {
@@ -134,6 +135,7 @@ export function makeAuthCommand(): Command {
     .description("Remove the active context's credentials")
     .action(() => {
       const name = getActiveContextName();
+      removeManifest(name);
       if (Object.keys(getAllContexts()).length <= 1) {
         getStore().set("contexts", {});
       } else {

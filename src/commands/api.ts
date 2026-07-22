@@ -1,6 +1,6 @@
 // src/commands/api.ts
 import { Command } from "commander";
-import { resolveConfig, isJsonOutput } from "../lib/config.js";
+import { resolveConfig, isJsonOutput, timeoutMsFrom } from "../lib/config.js";
 import { request } from "../lib/client.js";
 import { buildBody } from "../lib/body.js";
 import { onceOnly } from "../registry.js";
@@ -23,6 +23,7 @@ export function makeApiCommand(): Command {
     .option("--query <key=value...>", "Query parameter")
     .option("--data <json>", "Request body as JSON, or @file.json", onceOnly("--data"))
     .option("--set <key=value...>", "Set a body field; dot paths supported")
+    .option("--extrafield <key=value...>", "Set a custom field (maps to array_options)")
     .action(async (method: string, path: string, opts, command: Command) => {
       try {
         const verb = method.toUpperCase();
@@ -30,7 +31,14 @@ export function makeApiCommand(): Command {
           throw new Error(`Unsupported method "${method}". Use GET, POST, PUT, DELETE or PATCH.`);
         }
 
+        // A path may already carry a query string. Appending another "?" would
+        // produce .../thirdparties?limit=2?foo=bar, which the server reads as a
+        // single malformed parameter.
+        const [rawPath, embedded] = path.split("?", 2);
         const query: Record<string, unknown> = {};
+        for (const [key, value] of new URLSearchParams(embedded ?? "")) {
+          query[key] = value;
+        }
         for (const pair of (opts.query as string[] | undefined) ?? []) {
           const index = pair.indexOf("=");
           if (index <= 0) throw new Error(`Invalid --query "${pair}". Expected key=value.`);
@@ -40,9 +48,10 @@ export function makeApiCommand(): Command {
         const config = resolveConfig(command);
         const result = await request(config, {
           method: verb,
-          path: path.startsWith("/") ? path : `/${path}`,
+          path: rawPath.startsWith("/") ? rawPath : `/${rawPath}`,
           query,
-          body: buildBody({ data: opts.data, set: opts.set }),
+          body: buildBody({ data: opts.data, set: opts.set, extrafield: opts.extrafield }),
+          timeoutMs: timeoutMsFrom(command),
         });
         formatResult(result, command);
       } catch (err) {
