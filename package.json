@@ -1,0 +1,33 @@
+{
+  "name": "@manfred-kunze-dev/dolibarr-cli",
+  "version": "0.1.0",
+  "description": "CLI for the Dolibarr ERP/CRM REST API",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": { "dolibarr": "dist/cli.js", "doli": "dist/cli.js" },
+  "scripts": {
+    "build": "tsc && node scripts/copy-assets.mjs",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/cli.js",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:contract": "vitest run tests/contract",
+    "extract:fields": "node scripts/extract-fields.mjs"
+  },
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "cli-table3": "^0.6.5",
+    "commander": "^13.1.0",
+    "conf": "^13.1.0",
+    "ora": "^8.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.17",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": { "node": ">=18.20.8" },
+  "files": ["dist/**/*.js", "dist/**/*.d.ts", "dist/data/*.json"]
+}
