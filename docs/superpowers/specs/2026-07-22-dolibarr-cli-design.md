@@ -290,9 +290,13 @@ reads `N results (page P)`. The CLI never fabricates a total, and there is no Sp
 
 ## Local instances
 
-`compose.yml` provides three Dolibarr versions — previous, current, next — which is both the
-local dev story and the CI matrix. Versions are selected by Docker profile so a developer runs
-one while CI can run all three.
+**Support policy: exactly three Dolibarr majors — previous, current, next. Never more.** When a
+new major ships stable the window rolls: next becomes current, current becomes previous, and the
+oldest is dropped rather than carried. Every supported major multiplies the surface that must be
+verified, so the window is a hard scope boundary rather than a default.
+
+`compose.yml` provides those three versions, which is both the local dev story and the CI matrix.
+Versions are selected by Docker profile so a developer runs one while CI can run all three.
 
 | Profile | Image | Version | URL |
 |---|---|---|---|

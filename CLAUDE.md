@@ -16,6 +16,25 @@ A CLI that surfaces the **complete Dolibarr ERP/CRM REST API** to end users — 
 - **Epics** are group-level, on `manfred-kunze-dev`. No epic exists for this CLI yet — create one before starting epic-scale work rather than attaching to an unrelated parent.
 - The project already carries the standard scoped-label taxonomy: `status::{in-progress,needs-review,blocked,needs-info}`, `area::*`, `effort::{xs,s,m,l,xl}`, `priority::{low,medium,high,critical}`, plus `follow-up`, `bug`, `qa`, `breaking-change`.
 
+### Version Support Policy
+
+**Support exactly three Dolibarr majors at a time: previous, current, next.** Never more.
+
+As of 2026-07-22 that is 22 (previous), 23 (current), 24/`develop` (next). When 24 ships stable
+it becomes current, 23 becomes previous, 22 is **dropped**, and `develop` becomes the new next.
+
+This is a hard scope boundary, not a default. It follows directly from the API surface being
+instance-dependent — every additional supported major multiplies the surface that has to be
+verified. Consequences to honour:
+
+- The CI matrix is these three, and only these three.
+- `compose.yml` profiles track them; rolling the window means changing image tags there.
+- `required-fields.json` is re-extracted per supported major (`npm run extract:fields`).
+- Bug reports against an unsupported major get an upgrade recommendation, not a compatibility
+  shim. Do not add version-conditional code for majors outside the window.
+
+Do not widen this window without the user's explicit say-so.
+
 ### Reference projects (siblings, outside this repo)
 
 | Path | Authoritative for |
