@@ -1058,19 +1058,47 @@ export interface BodyInputs {
 
 type Json = Record<string, unknown>;
 
+/**
+ * Interpret a CLI string value.
+ *
+ * Only converts to a number when the text round-trips exactly. Dolibarr has
+ * real fields where a leading zero carries meaning — postal codes, account
+ * refs, barcodes, phone numbers with a trunk prefix — and `Number("01234")`
+ * would silently rewrite them as 1234.
+ */
 function coerce(raw: string): unknown {
   if (raw === "true") return true;
   if (raw === "false") return false;
   if (raw === "null") return null;
-  if (raw !== "" && !Number.isNaN(Number(raw))) return Number(raw);
+  if (raw !== "" && !Number.isNaN(Number(raw)) && String(Number(raw)) === raw) {
+    return Number(raw);
+  }
   return raw;
 }
 
+/**
+ * Path segments that must never be traversed.
+ *
+ * `cursor["__proto__"]` resolves to Object.prototype, which satisfies a naive
+ * typeof-object check, so a dotted key would walk into the real prototype and
+ * assign onto it — poisoning every object in the process (CWE-1321).
+ */
+const UNSAFE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
 function assignPath(target: Json, path: string, value: unknown): void {
   const parts = path.split(".");
+  for (const part of parts) {
+    if (UNSAFE_SEGMENTS.has(part)) {
+      throw new Error(`Unsafe key "${part}" in "${path}".`);
+    }
+  }
+
   let cursor: Json = target;
   for (const part of parts.slice(0, -1)) {
-    if (typeof cursor[part] !== "object" || cursor[part] === null) cursor[part] = {};
+    const next = cursor[part];
+    if (typeof next !== "object" || next === null || Array.isArray(next)) {
+      cursor[part] = Object.create(null) as Json;
+    }
     cursor = cursor[part] as Json;
   }
   cursor[parts[parts.length - 1]] = value;
@@ -1095,7 +1123,19 @@ export function buildBody(inputs: BodyInputs): Json | undefined {
 
   let body: Json = {};
   if (data !== undefined) {
-    const raw = data.startsWith("@") ? readFileSync(data.slice(1), "utf8") : data;
+    let raw: string;
+    if (data.startsWith("@")) {
+      const file = data.slice(1);
+      try {
+        raw = readFileSync(file, "utf8");
+      } catch (err) {
+        // readFileSync's ENOENT mentions neither --data nor what to do about it.
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(`--data file could not be read: ${file} (${reason})`);
+      }
+    } else {
+      raw = data;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
