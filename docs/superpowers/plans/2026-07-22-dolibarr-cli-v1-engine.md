@@ -3055,8 +3055,34 @@ export const LIVE_API_KEY = process.env.DOLIBARR_API_KEY ?? "dolibarrclidevkey00
 
 export const liveConfig = { baseUrl: LIVE_BASE_URL, apiKey: LIVE_API_KEY };
 
+const LOCAL_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+  "host.docker.internal",
+  "dolibarr",
+]);
+
+/**
+ * These tests CREATE and DELETE records, and they read DOLIBARR_BASE_URL — the
+ * very variable the CLI itself uses for normal operation. A developer who
+ * points the CLI at a customer's instance has it exported in their shell, and
+ * `npm test` would then mutate that instance. Non-local targets therefore
+ * require an explicit opt-in.
+ */
+export function targetIsAllowed(): boolean {
+  if (process.env.DOLIBARR_ALLOW_CONTRACT_TESTS === "1") return true;
+  try {
+    return LOCAL_HOSTS.has(new URL(LIVE_BASE_URL).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** Probe the instance so the suite can skip instead of failing when it is down. */
 export async function instanceAvailable(): Promise<boolean> {
+  if (!targetIsAllowed()) return false;
   try {
     const res = await fetch(`${LIVE_BASE_URL}/status`, {
       headers: { DOLAPIKEY: LIVE_API_KEY },
@@ -3067,6 +3093,21 @@ export async function instanceAvailable(): Promise<boolean> {
     return false;
   }
 }
+
+/** Tells the developer why the suite skipped, rather than leaving them guessing. */
+export function skipReason(): string {
+  if (!targetIsAllowed()) {
+    return (
+      `Refusing to run contract tests against a non-local target (${LIVE_BASE_URL}).\n` +
+      "These tests create and delete records. Set DOLIBARR_ALLOW_CONTRACT_TESTS=1 " +
+      "if that is genuinely what you want."
+    );
+  }
+  return (
+    `No Dolibarr reachable at ${LIVE_BASE_URL} — skipping contract tests.\n` +
+    "Start one with: docker compose --profile current up -d"
+  );
+}
 ```
 
 - [ ] **Step 2: Write the contract test**
@@ -3074,7 +3115,7 @@ export async function instanceAvailable(): Promise<boolean> {
 ```ts
 // tests/contract/live.test.ts
 import { describe, it, expect, beforeAll } from "vitest";
-import { liveConfig, instanceAvailable } from "./setup.js";
+import { liveConfig, instanceAvailable, skipReason } from "./setup.js";
 import { request } from "../../src/lib/client.js";
 import { fetchSpec } from "../../src/commands/sync.js";
 import { buildManifest } from "../../src/manifest.js";
@@ -3086,9 +3127,7 @@ import { DolibarrApiError } from "../../src/lib/errors.js";
 let available = false;
 beforeAll(async () => {
   available = await instanceAvailable();
-  if (!available) {
-    console.warn("No Dolibarr reachable — skipping contract tests. Start one with: docker compose --profile current up -d");
-  }
+  if (!available) console.warn(skipReason());
 });
 
 const live = (name: string, fn: () => Promise<void>, timeout?: number) =>
@@ -3129,17 +3168,27 @@ describe("live Dolibarr", () => {
     const created = (await request(liveConfig, {
       method: "post", path: "/thirdparties", body: { name: "dolibarr-cli contract test" },
     })) as number;
+    // Dolibarr answers create with a bare JSON integer. Note it is inconsistent:
+    // reading the same record back returns `id` as a STRING.
     expect(typeof created).toBe("number");
 
-    const fetched = (await request(liveConfig, {
-      method: "get", path: "/thirdparties/{id}", pathParams: { id: String(created) },
-    })) as any;
-    expect(fetched.name).toBe("dolibarr-cli contract test");
-
-    await request(liveConfig, {
-      method: "delete", path: "/thirdparties/{id}", pathParams: { id: String(created) },
-    });
+    // finally, not a trailing call: an assertion failure between create and
+    // delete would otherwise orphan the record permanently, and repeated CI
+    // failures would accumulate junk in whatever instance is configured.
+    try {
+      const fetched = (await request(liveConfig, {
+        method: "get", path: "/thirdparties/{id}", pathParams: { id: String(created) },
+      })) as any;
+      expect(fetched.name).toBe("dolibarr-cli contract test");
+    } finally {
+      await request(liveConfig, {
+        method: "delete", path: "/thirdparties/{id}", pathParams: { id: String(created) },
+      }).catch(() => {
+        console.warn(`Could not delete contract-test thirdparty ${created}; remove it manually.`);
+      });
+    }
   });
+
 });
 ```
 

@@ -1,6 +1,6 @@
 // tests/contract/live.test.ts
 import { describe, it, expect, beforeAll } from "vitest";
-import { liveConfig, instanceAvailable } from "./setup.js";
+import { liveConfig, instanceAvailable, skipReason } from "./setup.js";
 import { request } from "../../src/lib/client.js";
 import { fetchSpec } from "../../src/commands/sync.js";
 import { buildManifest } from "../../src/manifest.js";
@@ -12,9 +12,7 @@ import { DolibarrApiError } from "../../src/lib/errors.js";
 let available = false;
 beforeAll(async () => {
   available = await instanceAvailable();
-  if (!available) {
-    console.warn("No Dolibarr reachable — skipping contract tests. Start one with: docker compose --profile current up -d");
-  }
+  if (!available) console.warn(skipReason());
 });
 
 const live = (name: string, fn: () => Promise<void>, timeout?: number) =>
@@ -55,15 +53,25 @@ describe("live Dolibarr", () => {
     const created = (await request(liveConfig, {
       method: "post", path: "/thirdparties", body: { name: "dolibarr-cli contract test" },
     })) as number;
+    // Dolibarr answers create with a bare JSON integer. Note it is inconsistent:
+    // reading the same record back returns `id` as a STRING.
     expect(typeof created).toBe("number");
 
-    const fetched = (await request(liveConfig, {
-      method: "get", path: "/thirdparties/{id}", pathParams: { id: String(created) },
-    })) as any;
-    expect(fetched.name).toBe("dolibarr-cli contract test");
-
-    await request(liveConfig, {
-      method: "delete", path: "/thirdparties/{id}", pathParams: { id: String(created) },
-    });
+    // finally, not a trailing call: an assertion failure between create and
+    // delete would otherwise orphan the record permanently, and repeated CI
+    // failures would accumulate junk in whatever instance is configured.
+    try {
+      const fetched = (await request(liveConfig, {
+        method: "get", path: "/thirdparties/{id}", pathParams: { id: String(created) },
+      })) as any;
+      expect(fetched.name).toBe("dolibarr-cli contract test");
+    } finally {
+      await request(liveConfig, {
+        method: "delete", path: "/thirdparties/{id}", pathParams: { id: String(created) },
+      }).catch(() => {
+        console.warn(`Could not delete contract-test thirdparty ${created}; remove it manually.`);
+      });
+    }
   });
+
 });
