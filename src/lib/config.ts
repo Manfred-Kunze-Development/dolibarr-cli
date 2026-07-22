@@ -41,6 +41,11 @@ export function getStore(): Conf<Store> {
       projectName: "dolibarr",
       projectSuffix: "",
       ...(override ? { cwd: override } : {}),
+      // This file holds API keys in the clear. conf defaults to 0o666, which
+      // with a typical umask lands at 0644 — world-readable, so any other local
+      // account on a shared host or CI runner could read the credentials.
+      // Windows ignores POSIX modes and relies on profile ACLs instead.
+      configFileMode: 0o600,
       defaults: { activeContext: "default", contexts: {} },
     });
   }

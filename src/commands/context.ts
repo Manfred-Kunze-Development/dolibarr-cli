@@ -2,9 +2,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import Table from "cli-table3";
+import { existsSync } from "node:fs";
 import {
   getAllContexts, getActiveContextName, setActiveContext, setContext,
-  deleteContext, isJsonOutput,
+  deleteContext, isJsonOutput, manifestPathFor,
 } from "../lib/config.js";
 
 export function makeContextCommand(): Command {
@@ -40,6 +41,11 @@ export function makeContextCommand(): Command {
     .action((name: string) => {
       setActiveContext(name);
       console.log(chalk.green(`Switched to "${name}".`));
+      // Each context caches its own command tree, so switching to one that has
+      // never been synced silently leaves only the static commands available.
+      if (!existsSync(manifestPathFor(name))) {
+        console.log(chalk.dim('No command tree cached yet — run "dolibarr sync".'));
+      }
     });
 
   cmd
