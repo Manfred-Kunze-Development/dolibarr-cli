@@ -65,3 +65,56 @@ describe("request", () => {
       .rejects.toThrow(/api\/temp not writable/);
   });
 });
+
+describe("request — timeout and failure reporting", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("times out when the response body stalls, not just the headers", async () => {
+    // fetch() resolves as soon as headers arrive. If the timer is cleared at
+    // that point, abort() never fires and a slow-drip or never-completing body
+    // hangs the CLI forever — most likely during sync, which pulls ~900KB.
+    //
+    // The stub mirrors undici: the body read rejects with AbortError when the
+    // request's signal aborts. A plain `new Response(stream)` cannot express
+    // this, because a synthetic Response is not wired to the AbortController.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { signal: AbortSignal }) => {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () =>
+            new Promise<string>((_resolve, reject) => {
+              init.signal.addEventListener("abort", () => {
+                const err = new Error("The operation was aborted");
+                err.name = "AbortError";
+                reject(err);
+              });
+            }),
+        } as unknown as Response;
+      }),
+    );
+
+    await expect(request(cfg, { method: "get", path: "/x", timeoutMs: 100 }))
+      .rejects.toThrow(/timed out/i);
+  });
+
+  it("includes the underlying cause so TLS and DNS failures are distinguishable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("unable to verify the first certificate");
+    }));
+
+    await expect(request(cfg, { method: "get", path: "/status" }))
+      .rejects.toThrow(/unable to verify the first certificate/);
+  });
+
+  it("still tells the user what a good base URL looks like", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("getaddrinfo ENOTFOUND nope.invalid");
+    }));
+
+    await expect(request(cfg, { method: "get", path: "/status" }))
+      .rejects.toThrow(/api\/index\.php/);
+  });
+});
