@@ -149,8 +149,15 @@ console.log(`Copied ${count} data file(s) to ${to}`);
 
 - [ ] **Step 5: Install and verify**
 
-Run: `npm install && npm run typecheck`
-Expected: install succeeds; `typecheck` succeeds (no `src/` files yet, so no errors).
+Run: `npm install`
+Expected: install succeeds.
+
+Run: `npm run typecheck`
+Expected: **fails** with `error TS18003: No inputs were found in config file`. This is correct
+at this point — `include: ["src/**/*"]` matches nothing until Task 2 creates the first source
+file, and `tsc` treats an empty input set as an error rather than a trivial success. Do **not**
+add placeholder source files or weaken the tsconfig to silence it; it resolves by itself in
+Task 2. Re-run `npm run typecheck` after Task 2 to confirm it goes green.
 
 - [ ] **Step 6: Commit**
 
@@ -424,6 +431,16 @@ describe("buildManifest", () => {
   it("preserves basePath", () => {
     expect(buildManifest(reference, { fetchedAt: AT }).basePath).toBe("/api/index.php");
   });
+
+  it("harvests PATCH operations", () => {
+    // The reference spec has exactly one PATCH. Dropping it would lose an
+    // endpoint while still claiming complete coverage, and the live 23.0.3
+    // fixture cannot catch that because it contains no PATCH at all.
+    const m = buildManifest(reference, { fetchedAt: AT });
+    const patched = m.modules.thirdparties.operations.filter((o) => o.method === "patch");
+    expect(patched).toHaveLength(1);
+    expect(patched[0].path).toBe("/thirdparties/{id}/accounts/{site}");
+  });
 });
 ```
 
@@ -464,7 +481,16 @@ export interface Manifest {
   modules: Record<string, { operations: OperationSpec[] }>;
 }
 
-const METHODS = ["get", "post", "put", "delete"] as const;
+/**
+ * HTTP methods to harvest from the spec.
+ *
+ * `patch` matters: the reference capture contains exactly one PATCH operation
+ * (thirdpartiesModifySocieteAccount on /thirdparties/{id}/accounts/{site}).
+ * Omitting it silently drops an endpoint while claiming complete coverage.
+ * The live 23.0.3 capture has no PATCH at all, so only the reference fixture
+ * catches a regression here.
+ */
+const METHODS = ["get", "post", "put", "delete", "patch"] as const;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type RawSpec = Record<string, any>;
@@ -2429,7 +2455,9 @@ import { buildBody } from "../lib/body.js";
 import { formatResult } from "../lib/output.js";
 import { handleError } from "../lib/errors.js";
 
-const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
+// PATCH included: Dolibarr uses it for at least one real endpoint
+// (PATCH /thirdparties/{id}/accounts/{site}).
+const METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH"]);
 
 /**
  * Escape hatch for anything the generated tree does not cover -- an endpoint
@@ -2438,7 +2466,7 @@ const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
 export function makeApiCommand(): Command {
   return new Command("api")
     .description("Call any endpoint directly")
-    .argument("<method>", "GET, POST, PUT or DELETE")
+    .argument("<method>", "GET, POST, PUT, DELETE or PATCH")
     .argument("<path>", "Path relative to the API root, e.g. /thirdparties/1")
     .option("--query <key=value...>", "Query parameter")
     .option("--data <json>", "Request body as JSON, or @file.json")
@@ -2447,7 +2475,7 @@ export function makeApiCommand(): Command {
       try {
         const verb = method.toUpperCase();
         if (!METHODS.has(verb)) {
-          throw new Error(`Unsupported method "${method}". Use GET, POST, PUT or DELETE.`);
+          throw new Error(`Unsupported method "${method}". Use GET, POST, PUT, DELETE or PATCH.`);
         }
 
         const query: Record<string, unknown> = {};
