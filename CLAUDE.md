@@ -148,6 +148,42 @@ Mark exactly these as `.requiredOption()` in Commander; everything else is optio
 
 It also drops `linkedObjects` (keeping only `linkedObjectsIds`), plus `pass`/`pass_indatabase` and various error/UI properties.
 
+## Custom Modules Are Picked Up Automatically
+
+Dolibarr is commonly extended with custom modules under `htdocs/custom/`, and those can ship
+their own REST endpoints. **The CLI exposes them with no code changes** — this follows from
+deriving the tree from the live spec, and has been verified end to end.
+
+`dolGetModulesDirs()` scans every configured document root including the `custom` alt-root, so
+`htdocs/api/index.php` registers a custom module's API class exactly like a core one, and it lands
+in `/explorer/swagger.json` like everything else.
+
+Demonstrated against live 23.0.3 with a throwaway module exposing three endpoints:
+
+```
+before:  Synced 30 modules, 428 operations.
+after:   Synced 31 modules, 431 operations.
+
+$ dolibarr widgetsapi --help
+  get [options] <id>          Get properties of a widget
+  list [options]              List widgets
+  recalibrate [options] <id>  Recalibrate a widget
+```
+
+All three ran correctly, including `recalibrate` — a non-CRUD verb the naming rules had never
+seen. Requirements for a custom module to appear:
+
+- A descriptor at `custom/<module>/core/modules/mod<Module>.class.php`. Only the *filename* is
+  matched to derive the module name; the file is never included or instantiated.
+- An API class at `custom/<module>/class/api_<name>.class.php` declaring `<Name>Api` or `<Name>`.
+- The module enabled (`MAIN_MODULE_<NAME>` in `llx_const`).
+- A zero-argument constructor setting `$this->db` from the global — Restler instantiates API
+  classes with no arguments, while `DolibarrApi::__construct` requires a database handle. Every
+  core API class defines one for the same reason; omitting it yields a 500.
+
+The module's spec tag comes from its API *class* name, so `WidgetsApi` produces a `widgetsapi`
+command group. Custom modules control their own command name by naming the class deliberately.
+
 ## The API Surface Is Instance-Dependent
 
 `htdocs/api/index.php` only registers an API class when its module is enabled:
