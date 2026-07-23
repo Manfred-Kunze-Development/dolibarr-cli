@@ -69,7 +69,7 @@ descriptive metadata. Fields that are gated on specific Claude Code versions are
 
 ```json
 {
-  "name": "mkd-tools",
+  "name": "mkd",
   "owner": { "name": "Manfred Kunze Dev" },
   "plugins": [
     {
@@ -81,7 +81,7 @@ descriptive metadata. Fields that are gated on specific Claude Code versions are
 }
 ```
 
-The marketplace is named `mkd-tools` so it does not collide with any marketplace already
+The marketplace is named `mkd` so it does not collide with any marketplace already
 registered under the same account (names are unique per user), and so future MKD tool plugins can
 be added to the same catalog.
 
@@ -153,5 +153,5 @@ recorded in the plan, not pipeline jobs.
 |---|---|
 | Skill drifts from CLI behaviour | Note in `CLAUDE.md`; the skill lives in the same repo so a CLI change and its skill update are one MR. |
 | Plugin-manifest fields are version-gated | Keep to minimal required fields; rely on `claude plugin validate`. |
-| Marketplace name collision | Named `mkd-tools`, distinct from any existing marketplace. |
+| Marketplace name collision | Named `mkd`, distinct from any existing marketplace. |
 | Skill does not auto-invoke | Tune the `description` frontmatter; the manual load test confirms it fires. |
