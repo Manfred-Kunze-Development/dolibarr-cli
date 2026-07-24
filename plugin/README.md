@@ -9,16 +9,17 @@ slash commands, or hooks.
 
 ## Install
 
-This marketplace is hosted on GitLab, so use the full repository URL — the `owner/repo` shorthand
-resolves to GitHub only.
-
 ```
-/plugin marketplace add https://gitlab.com/manfred-kunze-dev/customers/manfred-kunze/dolibarr-cli.git
+/plugin marketplace add Manfred-Kunze-Development/dolibarr-cli
 /plugin install dolibarr@mkd
 ```
 
-Private repo? Claude Code reuses your existing git credentials, so HTTPS via `gh`/keychain or a
-loaded SSH key works the same as in your terminal.
+The marketplace is served from the public GitHub mirror at
+[`Manfred-Kunze-Development/dolibarr-cli`](https://github.com/Manfred-Kunze-Development/dolibarr-cli);
+`owner/repo` shorthand resolves to GitHub. The canonical source is a private GitLab repo that
+push-mirrors to that GitHub repo, so the plugin files there are always current. Nothing is
+downloaded as a release or package artifact — Claude Code clones the repo and reads the marketplace
+straight from the git tree.
 
 ## What it does
 
