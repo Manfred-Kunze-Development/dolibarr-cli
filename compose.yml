@@ -59,16 +59,18 @@ x-db-healthcheck: &db-healthcheck
 #
 # Uses curl (present in the image) rather than PHP's file_get_contents: the image
 # ships with allow_url_fopen=off, so any PHP-based HTTP probe silently fails.
+#
+# Greps the body for dolibarr_version rather than just `curl -fsS -o /dev/null`.
+# `-f` fails only on >=400, so a Dolibarr stuck at the installer — which 302-
+# redirects /status to /install/index.php — sailed through as "healthy". Requiring
+# the actual status JSON makes "healthy" mean genuinely usable, and correctly flags
+# an instance that never finished installing (e.g. the develop/24 image today).
 x-doli-healthcheck: &doli-healthcheck
   test:
-    - CMD
-    - curl
-    - -fsS
-    - -o
-    - /dev/null
-    - -H
-    - "DOLAPIKEY: dolibarrclidevkey000000000000000"
-    - http://localhost/api/index.php/status
+    - CMD-SHELL
+    - >-
+      curl -fsS -H "DOLAPIKEY: dolibarrclidevkey000000000000000"
+      http://localhost/api/index.php/status | grep -q dolibarr_version
   interval: 10s
   timeout: 10s
   retries: 30

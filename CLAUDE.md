@@ -313,16 +313,25 @@ curl -H "DOLAPIKEY: dolibarrclidevkey000000000000000" \
   http://localhost:8023/api/index.php/status
 ```
 
-Three things about this stack that are easy to get wrong, all learned the hard way:
+Four things about this stack that are easy to get wrong, all learned the hard way:
 
 - **Enable modules with `DOLI_ENABLE_MODULES`, never by inserting `MAIN_MODULE_*` rows.** The env
   var routes through `activateModule()`, which creates `/var/www/documents/api/temp`. Insert the
   const directly and the module looks enabled but the spec endpoint 500s with
   `Erreur temp dir api/temp not writable`.
-- **Healthchecks must use `curl`, not PHP.** The image ships `allow_url_fopen=off`, so a
-  `file_get_contents` probe fails forever while the container sits in `starting`.
+- **The healthcheck must grep the body for `dolibarr_version`, not just `curl -fsS -o /dev/null`.**
+  `-f` fails only on ≥400, so an instance stuck at the installer — which 302-redirects `/status`
+  to `/install/index.php` — passed as "healthy". Requiring the real status JSON makes "healthy"
+  mean genuinely usable. (Also: use `curl`, not PHP — the image ships `allow_url_fopen=off`, so a
+  `file_get_contents` probe never succeeds.)
 - **`DOLI_ENABLE_MODULES` must have no spaces.** `docker-init.php` does `explode(',', …)` without
   trimming, so a YAML folded scalar turns `Banque` into `mod Banque` and activation fails.
+- **The `next` (24) profile does not currently install.** There is no versioned `24.x` image on
+  Docker Hub yet — `dolibarr/dolibarr:develop` is the only way to get 24, and its "develop" version
+  string forces the entrypoint into an upgrade path that never completes, so everything
+  302-redirects to the installer. This is upstream, not a CLI defect, and is why CI marks
+  `contract:next` `allow_failure`. **Support status: 22 and 23 are verified working end-to-end (22 =
+  27 modules / 374 operations, clean derivation); 24 verification is pending a stable image.**
 
 Fetching the spec from a cold instance takes ~30–60 s — the explorer scans every module.
 
