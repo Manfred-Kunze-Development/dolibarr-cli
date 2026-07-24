@@ -1,0 +1,9 @@
+{
+  "name": "dolibarr",
+  "version": "0.1.0",
+  "description": "Drive the Dolibarr ERP/CRM CLI (@manfred-kunze-dev/dolibarr-cli) fluently — auth, per-instance sync, and the traps.",
+  "author": {
+    "name": "Manfred Kunze Dev"
+  },
+  "keywords": ["dolibarr", "erp", "crm", "cli"]
+}

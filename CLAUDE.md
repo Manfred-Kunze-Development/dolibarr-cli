@@ -374,3 +374,14 @@ BIG FEATURE = EPIC. FOLLOW-UP = ISSUE. NO EXCEPTION.
 Caveman check before merge: "follow-ups promoted? issue linked? epic linked?" If epic unknown → ASK user, do not skip.
 
 Surfacing 440 endpoints is inherently epic-scale — expect one epic with per-module slice issues rather than a single mega-issue.
+
+## The Claude Code Plugin Skill Is a Downstream Copy
+
+`plugin/skills/dolibarr/SKILL.md` restates the CLI's user-facing behaviour (the auth/sync/modules
+workflow, `--sqlfilters`, `--json` streams, local required-field checks, `delete --yes`,
+`--query-entity`, no list totals) so the plugin works on machines that do not have this repo.
+
+**When you change CLI behaviour that a user sees, update the skill in the same MR.** It is the same
+repo on purpose — the skill and the CLI it documents cannot be allowed to drift. The plugin stays
+under MKD branding (marketplace `mkd`, install `@manfred-kunze-dev/dolibarr-cli`) even as the org
+rebrands to 2kw; that carve-out is deliberate.

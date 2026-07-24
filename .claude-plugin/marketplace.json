@@ -1,0 +1,14 @@
+{
+  "name": "mkd",
+  "owner": {
+    "name": "Manfred Kunze Dev"
+  },
+  "description": "Manfred Kunze Dev tools for Claude Code.",
+  "plugins": [
+    {
+      "name": "dolibarr",
+      "source": "./plugin",
+      "description": "Drive the Dolibarr ERP/CRM CLI fluently."
+    }
+  ]
+}
