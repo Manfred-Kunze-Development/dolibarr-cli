@@ -13,6 +13,21 @@ npm install -g @manfred-kunze-dev/dolibarr-cli
 
 Also available as `doli`.
 
+### From Claude Code
+
+A [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) plugin makes Claude fluent in this CLI — the
+`auth → sync → modules → <module> <op>` workflow, `--sqlfilters`, `--json`, and the traps that
+otherwise cost a round of trial and error. Type both lines inside a Claude Code session:
+
+```
+/plugin marketplace add Manfred-Kunze-Development/dolibarr-cli
+/plugin install dolibarr@mkd
+```
+
+The plugin ships instructions, not a binary: on first use it checks for `dolibarr` and runs the npm
+install above if it is missing. See [`plugin/README.md`](plugin/README.md) for what it contains and
+how to load it without installing.
+
 ## Quick start
 
 ```bash
