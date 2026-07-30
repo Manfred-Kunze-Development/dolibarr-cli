@@ -111,6 +111,7 @@ dolibarr api POST /thirdparties --data '{"name":"ACME"}'
 | `--entity <id>` | Entity id for multi-company instances (`DOLAPIENTITY`) |
 | `--timeout <seconds>` | Request timeout, default 60 |
 | `--json` | Raw JSON on stdout |
+| `--verbose` | On error, dump the raw response body |
 | `--no-color` | Disable colour |
 
 Global options work before or after the subcommand. Two Dolibarr endpoints have their own query

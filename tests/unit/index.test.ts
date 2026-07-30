@@ -52,3 +52,10 @@ describe("global option shadowing", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("--verbose", () => {
+  it("is a global flag, so the raw error body can be dumped without curl", () => {
+    const flags = buildProgram(undefined).options.map((o) => o.long);
+    expect(flags).toContain("--verbose");
+  });
+});

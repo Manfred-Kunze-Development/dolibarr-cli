@@ -68,6 +68,18 @@ dolibarr context list
   ```bash
   dolibarr thirdparties list --properties id,email --json | jq -r '.[].email'
   ```
+- **Failures print Dolibarr's own diagnosis, indented under the error.** Dolibarr puts the real
+  cause in keys *beside* `message`, plus the PHP `file:line` that threw. Read the indented lines —
+  they name the actual problem:
+  ```
+  Error 500: Internal Server Error: Error creating thirdparty
+    ErrorCustomerCodeRequired
+    (api_thirdparties.class.php:324 at call stage)
+  ```
+  Under `--json` these arrive as `details[]` and `source`. If instead you get the hint *"the server
+  returned no detail"*, Dolibarr sent nothing usable — that is common on `update`, which discards
+  its own validation errors. **`--verbose` dumps the raw response body**; reach for it before
+  falling back to `curl`.
 - **`--sqlfilters` is the only server-side filter.** Syntax is `(t.field:operator:'value')`,
   combinable with `and`/`or`. Operators: `=`, `<`, `>`, `<=`, `>=`, `!=`, `like`.
   ```bash
