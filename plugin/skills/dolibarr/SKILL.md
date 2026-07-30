@@ -79,8 +79,33 @@ dolibarr context list
   itself, before any HTTP request. Supply fields with repeatable `--set key=value` (dot paths
   nest, e.g. `--set lines.0.qty=2`) or `--data @file.json`. Custom fields: `--extrafield k=v`.
   ```bash
-  dolibarr thirdparties create --set name="ACME GmbH" --set client=1
+  dolibarr thirdparties create --set name="ACME GmbH" --set client=1 --set code_client=auto
   ```
+- **Making a thirdparty a customer or supplier needs `code_client` / `code_fournisseur=auto`.**
+  Setting `client` (1=customer, 2=prospect, 3=both) or `fournisseur=1` without the matching code
+  fails with a bare `500` — the local required-field check does not catch it, because the field is
+  only conditionally required. Dolibarr auto-generates **only** when the value is the literal
+  `auto` (or `-1`); an absent field never generates one.
+  ```bash
+  dolibarr thirdparties create --set name="ACME GmbH" --set client=2 --set code_client=auto
+  dolibarr thirdparties update 42 --set fournisseur=1 --set code_fournisseur=auto
+  ```
+  This is `Societe::create()/update()` calling `get_codeclient()` behind `== -1 || === 'auto'`,
+  then `verify()` rejecting the empty code. Verified against 22.0.4.
+- **On a bare 500, read the raw body — the CLI drops the detail.** Dolibarr returns the real cause
+  in sibling keys next to `message`, and the CLI prints only `message`. `update` failures are the
+  worst case: the API throws `RestException(500, $this->company->error)`, and that singular field
+  is empty whenever the errors landed in `$this->errors[]`, so you get *no* message at all.
+  ```bash
+  curl -s -X POST "$BASE/thirdparties" -H "DOLAPIKEY: $KEY" \
+    -H 'Content-Type: application/json' -d '{"name":"ACME","client":2}'
+  # → "message": "Internal Server Error: Error creating thirdparty",
+  #   "1": "ErrorCustomerCodeRequired"      ← the actual cause, not shown by the CLI
+  ```
+- **`--data @file.json` rejects a UTF-8 BOM.** PowerShell's `Out-File -Encoding utf8` (5.1) and
+  `Set-Content -Encoding utf8` write one, and the CLI fails with `--data is not valid JSON`. Write
+  payload files BOM-less; on Windows this is also the reliable way to get umlauts through, since
+  inline JSON in an argument is mangled by the shell before the CLI sees it.
 - **`delete` refuses without consent.** It prompts interactively; when scripting or running
   non-interactively you MUST pass `--yes`, or it aborts.
   ```bash
