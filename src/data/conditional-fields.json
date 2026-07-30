@@ -1,0 +1,14 @@
+{
+  "thirdparties": [
+    {
+      "when": { "field": "client", "not": 0 },
+      "require": "code_client",
+      "because": "Societe::create() only generates the customer code when the field is present and set to -1 or \"auto\"; verify() then rejects an empty one."
+    },
+    {
+      "when": { "field": "fournisseur", "eq": 1 },
+      "require": "code_fournisseur",
+      "because": "Societe::create() only generates the supplier code when the field is present and set to -1 or \"auto\"; verify() then rejects an empty one."
+    }
+  ]
+}

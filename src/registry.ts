@@ -4,7 +4,7 @@ import type { Manifest, OperationSpec } from "./manifest.js";
 import { sanitizeCommand } from "./naming.js";
 import { resolveConfig, rootOf, isJsonOutput, timeoutMsFrom } from "./lib/config.js";
 import { request } from "./lib/client.js";
-import { buildBody, checkRequired } from "./lib/body.js";
+import { buildBody, checkRequired, checkConditional, type ConditionalRule } from "./lib/body.js";
 import { formatResult } from "./lib/output.js";
 import { handleError, DolibarrApiError } from "./lib/errors.js";
 import { confirm } from "./lib/prompt.js";
@@ -15,6 +15,9 @@ import { createRequire } from "node:module";
 // emitted file, so it works the same from src (vitest) and dist (installed).
 const require = createRequire(import.meta.url);
 const REQUIRED: Record<string, string[]> = require("./data/required-fields.json");
+// Separate from required-fields.json because that file is rewritten wholesale
+// by extract-fields.mjs; these rules are hand-curated. See lib/body.ts.
+const CONDITIONAL: Record<string, ConditionalRule[]> = require("./data/conditional-fields.json");
 const COLUMNS: Record<string, string[]> = require("./data/columns.json");
 
 /**
@@ -170,7 +173,14 @@ function buildOperationCommand(
         // Applying this to every POST blocked 61 endpoints on a live instance —
         // validating an invoice, adding a line, recording a payment — and told
         // the user to inject a field that does not belong in those payloads.
-        if (isRootCreate(op)) checkRequired(module, body, REQUIRED);
+        // Create only, for both guards. On update the record may already hold
+        // the conditionally-required value — a thirdparty created as a supplier
+        // last year already has code_fournisseur — and the CLI cannot know that
+        // without a round trip, so enforcing it here would reject valid calls.
+        if (isRootCreate(op)) {
+          checkRequired(module, body, REQUIRED);
+          checkConditional(module, body, CONDITIONAL);
+        }
       }
 
       const result = await request(config, {

@@ -79,8 +79,13 @@ dolibarr context list
   itself, before any HTTP request. Supply fields with repeatable `--set key=value` (dot paths
   nest, e.g. `--set lines.0.qty=2`) or `--data @file.json`. Custom fields: `--extrafield k=v`.
   ```bash
-  dolibarr thirdparties create --set name="ACME GmbH" --set client=1
+  dolibarr thirdparties create --set name="ACME GmbH" --set client=1 --set code_client=auto
   ```
+  This covers **conditionally** required fields too — ones Dolibarr demands only because of
+  another field's value. Setting `client` (1=customer, 2=prospect, 3=both) requires `code_client`,
+  and `fournisseur=1` requires `code_fournisseur`; pass the literal **`auto`** and Dolibarr
+  generates the next code in the sequence. The check is create-only: on `update` the record may
+  already carry a code, which the CLI cannot know without a round trip.
 - **`delete` refuses without consent.** It prompts interactively; when scripting or running
   non-interactively you MUST pass `--yes`, or it aborts.
   ```bash
