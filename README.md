@@ -82,7 +82,7 @@ dolibarr thirdparties list --properties id,name,email
 dolibarr invoices list --columns ref,total_ttc,date
 
 # Create: --set repeats, dot paths nest, --data takes JSON or @file.json
-dolibarr thirdparties create --set name="ACME GmbH" --set client=1
+dolibarr thirdparties create --set name="ACME GmbH" --set client=1 --set code_client=auto
 dolibarr thirdparties create --data @acme.json --set name="Override"
 
 # Custom fields land in array_options
@@ -92,6 +92,12 @@ dolibarr thirdparties create --set name="ACME" --extrafield colour=red
 Dolibarr create/update endpoints accept any property of the underlying record, so the CLI does not
 restrict which fields you may send. Fields that are mandatory on create are checked locally first,
 giving an immediate error instead of a server round trip.
+
+A few fields are mandatory only in combination with another — setting `client` on a thirdparty
+requires `code_client`, and `fournisseur=1` requires `code_fournisseur`. Dolibarr enforces these
+inside the entity's `verify()`, where neither the API description nor the extracted required-field
+list can see them, so they are curated by hand in `src/data/conditional-fields.json` and checked
+the same way. Pass the literal `auto` to have Dolibarr generate the code.
 
 ### Anything not covered
 

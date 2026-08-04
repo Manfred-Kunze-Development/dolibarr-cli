@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildBody, checkRequired } from "../../src/lib/body.js";
+import { buildBody, checkRequired, checkConditional } from "../../src/lib/body.js";
 
 describe("buildBody", () => {
   it("returns undefined when nothing is supplied", () => {
@@ -141,5 +141,67 @@ describe("buildBody — array and extrafield integrity", () => {
     // array_options bug.
     expect(() => buildBody({ data: '{"lines":[1]}', set: ["lines.4294967296=x"] }))
       .toThrow(/valid index/i);
+  });
+});
+
+describe("checkConditional", () => {
+  // Dolibarr enforces these inside Societe::verify(), not in the API class's
+  // static $FIELDS, so they are invisible to both the Swagger spec and the
+  // required-fields extractor. See issue #8.
+  const rules = {
+    thirdparties: [
+      { when: { field: "client", not: 0 }, require: "code_client" },
+      { when: { field: "fournisseur", eq: 1 }, require: "code_fournisseur" },
+    ],
+  };
+
+  it("demands code_client once client is set to a non-zero value", () => {
+    expect(() => checkConditional("thirdparties", { name: "ACME", client: 2 }, rules))
+      .toThrow(/code_client/);
+  });
+
+  it("names the `auto` escape hatch, which is the actual fix", () => {
+    expect(() => checkConditional("thirdparties", { name: "ACME", client: 1 }, rules))
+      .toThrow(/auto/);
+  });
+
+  it("passes once the code is supplied", () => {
+    expect(() => checkConditional("thirdparties", { name: "ACME", client: 2, code_client: "auto" }, rules))
+      .not.toThrow();
+  });
+
+  it("stays silent when the trigger field is absent", () => {
+    // An absent field is never assigned by post(), so no rule fires. This is
+    // what keeps a plain `create --set name=X` working.
+    expect(() => checkConditional("thirdparties", { name: "ACME" }, rules)).not.toThrow();
+  });
+
+  it("stays silent when client is explicitly 0", () => {
+    expect(() => checkConditional("thirdparties", { name: "ACME", client: 0 }, rules)).not.toThrow();
+  });
+
+  it("treats a string value from --data the same as a number from --set", () => {
+    // --set client=2 coerces to 2; --data '{"client":"2"}' stays "2".
+    expect(() => checkConditional("thirdparties", { client: "2" }, rules)).toThrow(/code_client/);
+    expect(() => checkConditional("thirdparties", { client: "0" }, rules)).not.toThrow();
+  });
+
+  it("handles the eq form for fournisseur", () => {
+    expect(() => checkConditional("thirdparties", { fournisseur: 1 }, rules))
+      .toThrow(/code_fournisseur/);
+    expect(() => checkConditional("thirdparties", { fournisseur: 0 }, rules)).not.toThrow();
+  });
+
+  it("reports every unmet rule at once, not just the first", () => {
+    expect(() => checkConditional("thirdparties", { client: 1, fournisseur: 1 }, rules))
+      .toThrow(/code_client[\s\S]*code_fournisseur/);
+  });
+
+  it("ignores modules with no rules", () => {
+    expect(() => checkConditional("invoices", { socid: 1 }, rules)).not.toThrow();
+  });
+
+  it("tolerates an undefined body", () => {
+    expect(() => checkConditional("thirdparties", undefined, rules)).not.toThrow();
   });
 });

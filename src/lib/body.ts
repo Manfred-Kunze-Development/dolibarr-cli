@@ -164,6 +164,71 @@ export function buildBody(inputs: BodyInputs): Json | undefined {
   return body;
 }
 
+/**
+ * A field Dolibarr requires only when another field holds a particular value.
+ *
+ * `eq` matches one value; `not` matches everything except one. Comparison is on
+ * the string form, because the same field arrives as a number through
+ * `--set client=2` (coerce()) and as a string through `--data '{"client":"2"}'`.
+ */
+export interface ConditionalRule {
+  when: { field: string; eq?: unknown; not?: unknown };
+  require: string;
+  /** Optional note appended to the error, for rules whose reason is not obvious. */
+  because?: string;
+}
+
+function ruleApplies(rule: ConditionalRule, body: Json): boolean {
+  const actual = body[rule.when.field];
+  // An absent trigger is never assigned by post(), so the rule cannot fire.
+  // This is what keeps a plain `create --set name=X` working.
+  if (actual === undefined || actual === null) return false;
+  if (rule.when.eq !== undefined) return String(actual) === String(rule.when.eq);
+  if (rule.when.not !== undefined) return String(actual) !== String(rule.when.not);
+  return false;
+}
+
+/**
+ * Check fields that are required only in combination with another field.
+ *
+ * These live outside `required-fields.json` on purpose: that file is rewritten
+ * wholesale by `npm run extract:fields`, which runs on every roll of the
+ * supported-version window, so hand-maintained entries there would be silently
+ * destroyed. Rules here are curated by hand and the extractor never touches them.
+ *
+ * Dolibarr enforces them inside each entity's `verify()`, which is invisible to
+ * both the Swagger spec and the API class's static `$FIELDS` — so neither source
+ * the CLI derives validation from can see them. See issue #8.
+ */
+export function checkConditional(
+  module: string,
+  body: Json | undefined,
+  table: Record<string, ConditionalRule[]>,
+): void {
+  const rules = table[module];
+  if (!rules || rules.length === 0 || body === undefined) return;
+
+  const unmet = rules.filter(
+    (rule) => ruleApplies(rule, body) && body[rule.require] === undefined,
+  );
+  if (unmet.length === 0) return;
+
+  const lines = unmet.map((rule) => {
+    const trigger = `${rule.when.field}=${String(body[rule.when.field])}`;
+    const why = rule.because ? ` ${rule.because}` : "";
+    return `  ${rule.require} is required when ${trigger}.${why}`;
+  });
+
+  // Naming `auto` matters: Dolibarr only generates the code when the field is
+  // present and set to -1 or the literal "auto". An absent field never triggers
+  // generation, which is exactly how users end up with an opaque 500.
+  throw new Error(
+    `Missing conditionally required field(s) for ${module}:\n${lines.join("\n")}\n` +
+      `Pass the literal "auto" to have Dolibarr generate one, e.g. ` +
+      `--set ${unmet[0].require}=auto`,
+  );
+}
+
 /** Client-side check against fields extracted from the Dolibarr PHP source. */
 export function checkRequired(
   module: string,
