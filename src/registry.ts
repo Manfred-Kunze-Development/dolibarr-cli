@@ -2,7 +2,7 @@
 import { Command, Option } from "commander";
 import type { Manifest, OperationSpec } from "./manifest.js";
 import { sanitizeCommand } from "./naming.js";
-import { resolveConfig, rootOf, isJsonOutput, timeoutMsFrom } from "./lib/config.js";
+import { resolveConfig, rootOf, isJsonOutput, isVerbose, timeoutMsFrom } from "./lib/config.js";
 import { request } from "./lib/client.js";
 import { buildBody, checkRequired } from "./lib/body.js";
 import { formatResult } from "./lib/output.js";
@@ -206,7 +206,7 @@ function buildOperationCommand(
       // matches what the success path uses. availableModules must be passed:
       // without it every 404 claims the module is disabled, because
       // ![].includes(x) is always true.
-      handleError(err, isJsonOutput(command), availableModules);
+      handleError(err, isJsonOutput(command), availableModules, isVerbose(command));
     }
   });
 

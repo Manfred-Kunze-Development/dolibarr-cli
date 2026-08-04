@@ -1,6 +1,6 @@
 // src/lib/client.ts
 import type { ResolvedConfig } from "./config.js";
-import { DolibarrApiError, parseErrorBody } from "./errors.js";
+import { DolibarrApiError, parseError } from "./errors.js";
 
 export interface RequestOptions {
   method: string;
@@ -102,8 +102,12 @@ export async function request(config: ResolvedConfig, options: RequestOptions): 
     }
 
     if (!response.ok) {
-      throw new DolibarrApiError(response.status, parseErrorBody(parsed) || response.statusText, {
+      const { message, details, source } = parseError(parsed);
+      throw new DolibarrApiError(response.status, message || response.statusText, {
         module: options.module,
+        details,
+        source,
+        body: parsed,
       });
     }
     return parsed;

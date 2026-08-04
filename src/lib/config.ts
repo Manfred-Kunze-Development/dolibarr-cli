@@ -192,3 +192,7 @@ export function timeoutMsFrom(command: Command): number | undefined {
 export function isJsonOutput(command: Command): boolean {
   return rootOf(command).opts().json === true;
 }
+
+export function isVerbose(command: Command): boolean {
+  return rootOf(command).opts().verbose === true;
+}

@@ -57,6 +57,36 @@ describe("request", () => {
       .rejects.toMatchObject({ status: 404, message: "Not Found", module: "mos" });
   });
 
+  it("carries Dolibarr's detail keys and debug.source onto the error", async () => {
+    // Verbatim capture from live 22.0.4: POST /thirdparties with client=2 and
+    // no code_client. Everything diagnostic is outside `message`.
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({
+        error: {
+          code: 500,
+          message: "Internal Server Error: Error creating thirdparty",
+          "0": "",
+          "1": "ErrorCustomerCodeRequired",
+        },
+        debug: { source: "api_thirdparties.class.php:324 at call stage" },
+      }), { status: 500 })));
+
+    await expect(request(cfg, { method: "post", path: "/thirdparties", body: {} }))
+      .rejects.toMatchObject({
+        status: 500,
+        details: ["ErrorCustomerCodeRequired"],
+        source: "api_thirdparties.class.php:324 at call stage",
+      });
+  });
+
+  it("retains the raw body so --verbose can dump it", async () => {
+    const raw = { error: { code: 500, message: "boom", "1": "detail" } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(raw), { status: 500 })));
+
+    await expect(request(cfg, { method: "get", path: "/x" }))
+      .rejects.toMatchObject({ body: raw });
+  });
+
   it("surfaces a non-JSON error body verbatim", async () => {
     vi.stubGlobal("fetch", vi.fn(async () =>
       new Response("Erreur temp dir api/temp not writable", { status: 500 })));

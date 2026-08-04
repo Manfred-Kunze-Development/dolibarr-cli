@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import chalk from "chalk";
 import ora from "ora";
-import { resolveConfig, getActiveContextName, getActiveContext, isJsonOutput, timeoutMsFrom, type ResolvedConfig } from "../lib/config.js";
+import { resolveConfig, getActiveContextName, getActiveContext, isJsonOutput, isVerbose, timeoutMsFrom, type ResolvedConfig } from "../lib/config.js";
 import { buildManifest } from "../manifest.js";
 import { saveManifest } from "../lib/manifest-store.js";
 import { handleError, DolibarrApiError } from "../lib/errors.js";
@@ -172,7 +172,7 @@ export function makeSyncCommand(): Command {
           console.log(chalk.dim(`Manifest: ${path}`));
         }
       } catch (err) {
-        handleError(err, isJsonOutput(command));
+        handleError(err, isJsonOutput(command), [], isVerbose(command));
       }
     });
 }

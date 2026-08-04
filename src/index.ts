@@ -40,6 +40,7 @@ export function buildProgram(manifest: Manifest | undefined): Command {
     .option("--entity <id>", "Entity id for multi-company instances (DOLAPIENTITY)")
     .option("--timeout <seconds>", "Request timeout in seconds (default 60)")
     .option("--json", "Output raw JSON")
+    .option("--verbose", "On error, dump the raw response body")
     .option("--no-color", "Disable coloured output");
 
   program.addCommand(makeAuthCommand());

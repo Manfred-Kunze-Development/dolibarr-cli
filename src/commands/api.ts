@@ -1,6 +1,6 @@
 // src/commands/api.ts
 import { Command } from "commander";
-import { resolveConfig, isJsonOutput, timeoutMsFrom } from "../lib/config.js";
+import { resolveConfig, isJsonOutput, isVerbose, timeoutMsFrom } from "../lib/config.js";
 import { request } from "../lib/client.js";
 import { buildBody } from "../lib/body.js";
 import { onceOnly } from "../registry.js";
@@ -55,7 +55,7 @@ export function makeApiCommand(): Command {
         });
         formatResult(result, command);
       } catch (err) {
-        handleError(err, isJsonOutput(command));
+        handleError(err, isJsonOutput(command), [], isVerbose(command));
       }
     });
 }
