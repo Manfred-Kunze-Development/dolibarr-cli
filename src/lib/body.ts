@@ -1,6 +1,4 @@
 // src/lib/body.ts
-import { readFileSync } from "node:fs";
-
 export interface BodyInputs {
   data?: string;
   set?: string[];
@@ -116,19 +114,9 @@ export function buildBody(inputs: BodyInputs): Json | undefined {
 
   let body: Json = {};
   if (data !== undefined) {
-    let raw: string;
-    if (data.startsWith("@")) {
-      const file = data.slice(1);
-      try {
-        raw = readFileSync(file, "utf8");
-      } catch (err) {
-        // readFileSync's ENOENT mentions neither --data nor what to do about it.
-        const reason = err instanceof Error ? err.message : String(err);
-        throw new Error(`--data file could not be read: ${file} (${reason})`);
-      }
-    } else {
-      raw = data;
-    }
+    // @file resolution happens in the CLI layer (lib/data-file.ts); here data
+    // is always the raw JSON text.
+    const raw = data;
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);

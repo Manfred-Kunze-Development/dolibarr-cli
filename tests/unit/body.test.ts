@@ -80,10 +80,7 @@ describe("buildBody — data integrity and safety", () => {
     expect(({} as Record<string, unknown>).x).toBeUndefined();
   });
 
-  it("explains a missing --data file in CLI terms", () => {
-    expect(() => buildBody({ data: "@definitely-missing-file.json" }))
-      .toThrow(/--data.*could not be read|could not read/i);
-  });
+  // The @file convention moved to the CLI layer — see tests/unit/data-file.test.ts.
 });
 
 describe("buildBody — array and extrafield integrity", () => {

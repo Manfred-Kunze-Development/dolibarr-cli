@@ -5,6 +5,7 @@ import { sanitizeCommand } from "./naming.js";
 import { resolveConfig, rootOf, isJsonOutput, isVerbose, timeoutMsFrom } from "./lib/config.js";
 import { request } from "./lib/client.js";
 import { buildBody, checkRequired, checkConditional, type ConditionalRule } from "./lib/body.js";
+import { resolveDataArg } from "./lib/data-file.js";
 import { formatResult } from "./lib/output.js";
 import { handleError, DolibarrApiError } from "./lib/errors.js";
 import { confirm } from "./lib/prompt.js";
@@ -165,7 +166,7 @@ function buildOperationCommand(
       let body: Record<string, unknown> | undefined;
       if (op.hasBody) {
         body = buildBody({
-          data: opts.data as string | undefined,
+          data: resolveDataArg(opts.data as string | undefined),
           set: opts.set as string[] | undefined,
           extrafield: opts.extrafield as string[] | undefined,
         });

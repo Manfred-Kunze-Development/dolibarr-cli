@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { resolveConfig, isJsonOutput, isVerbose, timeoutMsFrom } from "../lib/config.js";
 import { request } from "../lib/client.js";
 import { buildBody } from "../lib/body.js";
+import { resolveDataArg } from "../lib/data-file.js";
 import { onceOnly } from "../registry.js";
 import { formatResult } from "../lib/output.js";
 import { handleError } from "../lib/errors.js";
@@ -50,7 +51,7 @@ export function makeApiCommand(): Command {
           method: verb,
           path: rawPath.startsWith("/") ? rawPath : `/${rawPath}`,
           query,
-          body: buildBody({ data: opts.data, set: opts.set, extrafield: opts.extrafield }),
+          body: buildBody({ data: resolveDataArg(opts.data), set: opts.set, extrafield: opts.extrafield }),
           timeoutMs: timeoutMsFrom(command),
         });
         formatResult(result, command);
