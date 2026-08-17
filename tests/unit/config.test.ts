@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Command } from "commander";
-import { resolveFrom, manifestPathFor, validateContextName, getStore, timeoutMsFrom } from "../../src/lib/config.js";
+import { resolveFrom, manifestPathFor, validateContextName, getStore, timeoutMsFrom, isVerbose } from "../../src/lib/config.js";
 
 describe("validateContextName", () => {
   it("accepts safe names", () => expect(() => validateContextName("acme-1_x")).not.toThrow());
@@ -74,5 +74,22 @@ describe("timeoutMsFrom", () => {
     for (const bad of ["abc", "0", "-5", "Infinity"]) {
       expect(() => timeoutMsFrom(withTimeout(bad)), bad).toThrow(/positive number/i);
     }
+  });
+});
+
+describe("isVerbose", () => {
+  it("is false by default", () => {
+    const program = new Command();
+    program.option("--verbose");
+    program.parse(["node", "x"]);
+    expect(isVerbose(program)).toBe(false);
+  });
+
+  it("is true when the root flag is set, even from a nested subcommand", () => {
+    const program = new Command();
+    program.option("--verbose");
+    const child = program.command("thirdparties").command("create");
+    program.parse(["node", "x", "--verbose", "thirdparties", "create"]);
+    expect(isVerbose(child)).toBe(true);
   });
 });

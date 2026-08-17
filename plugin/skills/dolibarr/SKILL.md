@@ -68,6 +68,18 @@ dolibarr context list
   ```bash
   dolibarr thirdparties list --properties id,email --json | jq -r '.[].email'
   ```
+- **Failures print Dolibarr's own diagnosis, indented under the error.** Dolibarr puts the real
+  cause in keys *beside* `message`, plus the PHP `file:line` that threw. Read the indented lines —
+  they name the actual problem:
+  ```
+  Error 500: Internal Server Error: Error creating thirdparty
+    ErrorCustomerCodeRequired
+    (api_thirdparties.class.php:324 at call stage)
+  ```
+  Under `--json` these arrive as `details[]` and `source`. If instead you get the hint *"the server
+  returned no detail"*, Dolibarr sent nothing usable — that is common on `update`, which discards
+  its own validation errors. **`--verbose` dumps the raw response body**; reach for it before
+  falling back to `curl`.
 - **`--sqlfilters` is the only server-side filter.** Syntax is `(t.field:operator:'value')`,
   combinable with `and`/`or`. Operators: `=`, `<`, `>`, `<=`, `>=`, `!=`, `like`.
   ```bash
@@ -81,24 +93,29 @@ dolibarr context list
   ```bash
   dolibarr thirdparties create --set name="ACME GmbH" --set email=info@acme.example
   ```
-- **On *some* instances, `client` / `fournisseur` also require a code.** Whether an empty
-  `code_client` / `code_fournisseur` is accepted is an **instance setting**, not a rule of the
-  entity — so the same payload succeeds on one Dolibarr and 500s on another. The deciding constant
-  is `MAIN_COMPANY_CODE_ALWAYS_REQUIRED`: both stock code addons (`monkey`, `leopard`) accept an
-  empty code unless it is set. Where it *is* set, `client` (1=customer, 2=prospect, 3=both) or
-  `fournisseur=1` without the matching code fails with a `500` naming `ErrorCustomerCodeRequired`.
-  Pass the literal `auto` and Dolibarr generates the next code in the sequence:
+- **`client` / `fournisseur` need their code on `create` — the CLI insists before the server
+  does.** Setting `client` (1=customer, 2=prospect, 3=both) requires `code_client`, and
+  `fournisseur=1` requires `code_fournisseur`; on `create` a missing one is refused locally and no
+  request is made. Pass the literal `auto` and Dolibarr generates the next code in the sequence:
   ```bash
   dolibarr thirdparties create --set name="ACME GmbH" --set client=2 --set code_client=auto
+  ```
+  Whether the *server* would have insisted is an **instance setting**, not a rule of the entity.
+  The deciding constant is `MAIN_COMPANY_CODE_ALWAYS_REQUIRED`: both stock code addons (`monkey`,
+  `leopard`) accept an empty code unless it is set. Verified both ways on 23.0.3 — constant unset,
+  the record is created with a null code; constant set, the same request fails with a `500` naming
+  `ErrorCustomerCodeRequired`. The CLI's local rule is the strict reading, so on a stock instance
+  `auto` costs a number from the code sequence that the server did not ask for.
+  On `update` nothing is checked locally — the record may already carry a code — and **`auto` is
+  not a no-op there: it generates a fresh code and replaces the one the record has**, consuming
+  another number each time (verified: `CU2608-00001` became `CU2608-00002` on a second `auto`).
+  **Do not add `auto` reflexively on `update`.** Add it only to a record that has no code yet, and
+  only because a code is wanted — the instance demands one, or you do:
+  ```bash
   dolibarr thirdparties update 42 --set fournisseur=1 --set code_fournisseur=auto
   ```
-  **Do not add `auto` reflexively** — it consumes a number from the customer/supplier code
-  sequence, which is a side effect you did not ask for. Add it when the server asks for it, or when
-  you know the instance sets that constant.
   Mechanism: `Societe::create()/update()` call `get_codeclient()` only behind `== -1 || === 'auto'`,
-  so an *absent* field never generates a code; `verify()` then applies the addon's rule. Verified
-  both ways on 23.0.3 — constant unset, the record is created with a null code; constant set, the
-  same request fails.
+  so an *absent* field never generates a code; `verify()` then applies the addon's rule.
 - **`--data @file.json` rejects a UTF-8 BOM.** PowerShell's `Out-File -Encoding utf8` (5.1) and
   `Set-Content -Encoding utf8` write one, and the CLI fails with `--data is not valid JSON`. Write
   payload files BOM-less; on Windows this is also the reliable way to get umlauts through, since

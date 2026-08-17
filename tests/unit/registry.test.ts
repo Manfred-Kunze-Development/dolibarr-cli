@@ -205,3 +205,62 @@ describe("repeated --data", () => {
     expect(program.commands.map((c) => c.name())).toContain("help-module");
   });
 });
+
+describe("conditional-field guard wiring", () => {
+  const OLD_ENV = { ...process.env };
+
+  beforeEach(() => {
+    process.env.DOLIBARR_API_KEY = "k";
+    process.env.DOLIBARR_BASE_URL = "http://host/api/index.php";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    process.env = { ...OLD_ENV };
+    process.exitCode = 0;
+  });
+
+  async function runCreate(argv: string[]): Promise<{ output: string; requested: boolean }> {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((m?: unknown) => { lines.push(String(m)); });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const program = new Command().option("--json", "Output raw JSON");
+    registerGeneratedCommands(program, manifest, new Set());
+    program.exitOverride();
+    await program.parseAsync(argv, { from: "user" });
+    return { output: lines.join("\n"), requested: fetchMock.mock.calls.length > 0 };
+  }
+
+  it("blocks a thirdparty create with client set but no code_client", async () => {
+    const { output, requested } = await runCreate([
+      "thirdparties", "create", "--set", "name=ACME", "--set", "client=2",
+    ]);
+    expect(output).toMatch(/code_client/);
+    // The promise the CLI makes is that this costs no round trip.
+    expect(requested).toBe(false);
+  });
+
+  it("lets the create through once code_client=auto is supplied", async () => {
+    const { requested } = await runCreate([
+      "thirdparties", "create",
+      "--set", "name=ACME", "--set", "client=2", "--set", "code_client=auto",
+    ]);
+    expect(requested).toBe(true);
+  });
+
+  it("leaves a plain create untouched", async () => {
+    const { requested } = await runCreate(["thirdparties", "create", "--set", "name=ACME"]);
+    expect(requested).toBe(true);
+  });
+
+  it("does not apply the guard to update, where the record may already hold a code", async () => {
+    // Locally we cannot know whether thirdparty 42 already has a customer code,
+    // so enforcing this on update would reject valid calls.
+    const { requested } = await runCreate([
+      "thirdparties", "update", "42", "--set", "client=2",
+    ]);
+    expect(requested).toBe(true);
+  });
+});

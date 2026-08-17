@@ -4,7 +4,7 @@ import chalk from "chalk";
 import { createInterface } from "node:readline/promises";
 import {
   getStore, setContext, setActiveContext, getActiveContextName, getActiveContext,
-  getAllContexts, deleteContext, resolveConfig, isJsonOutput, rootOf,
+  getAllContexts, deleteContext, resolveConfig, isJsonOutput, isVerbose, rootOf,
 } from "../lib/config.js";
 import { request } from "../lib/client.js";
 import { removeManifest } from "../lib/manifest-store.js";
@@ -126,7 +126,7 @@ export function makeAuthCommand(): Command {
           console.log(`  Dolibarr: ${version}`);
         }
       } catch (err) {
-        handleError(err, isJsonOutput(command));
+        handleError(err, isJsonOutput(command), [], isVerbose(command));
       }
     });
 
