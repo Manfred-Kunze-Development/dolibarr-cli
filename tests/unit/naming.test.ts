@@ -22,6 +22,23 @@ describe("baseCommandName", () => {
     expect(baseCommandName("productsDelSubproducts", "products")).toBe("delete-subproducts");
     expect(baseCommandName("thirdpartiesMerge", "thirdparties")).toBe("merge");
   });
+
+  it("does not resolve the leading verb through Object.prototype", () => {
+    // The verb table is a plain object literal, so a bare `LEAD_VERBS[key]`
+    // lookup finds inherited properties: `constructor` yields the Object
+    // function itself and `__proto__` yields Object.prototype, and either then
+    // ends up stringified into the command name. No Dolibarr 23.0.3 operationId
+    // produces such a remainder, but a custom module may.
+    expect(baseCommandName("invoicesConstructorFoo", "invoices")).toBe("constructor-foo");
+    expect(baseCommandName("invoicesConstructor", "invoices")).toBe("constructor");
+    expect(baseCommandName("invoices__proto__", "invoices")).toBe("__proto__");
+    // Same reach with an empty tag: the whole operationId is the remainder.
+    expect(baseCommandName("__proto__", "")).toBe("__proto__");
+    // Non-colliding neighbours were always right and must stay so.
+    expect(baseCommandName("invoicesToStringFoo", "invoices")).toBe("to-string-foo");
+    expect(baseCommandName("invoicesValueOf", "invoices")).toBe("value-of");
+    expect(baseCommandName("invoicesHasOwnProperty", "invoices")).toBe("has-own-property");
+  });
 });
 
 describe("pathParamNames", () => {
