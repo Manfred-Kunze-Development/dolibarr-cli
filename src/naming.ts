@@ -9,7 +9,15 @@ const ROOT_VERBS: Record<string, string> = {
   remove: "delete",
 };
 
-/** Leading token of a shape-B remainder, normalised. Dolibarr mixes Remove/Del. */
+/**
+ * Leading token of a shape-B remainder, normalised. Dolibarr mixes Remove/Del.
+ *
+ * Both tables are plain object literals, so they inherit from Object.prototype.
+ * ROOT_VERBS is only ever iterated with Object.entries (own keys), but LEAD_VERBS
+ * is looked up by a token taken from the operationId, and a bare `LEAD_VERBS[key]`
+ * would find `constructor`, `__proto__`, and their siblings and paste the Object
+ * function itself into a command name. Guard the lookup with Object.hasOwn.
+ */
 const LEAD_VERBS: Record<string, string> = {
   retrieve: "get",
   get: "get",
@@ -41,7 +49,9 @@ export function baseCommandName(operationId: string, tag: string): string {
     const rest = operationId.slice(tag.length);
     if (rest) {
       const parts = kebab(rest).split("-").filter(Boolean);
-      if (parts.length > 0 && LEAD_VERBS[parts[0]]) parts[0] = LEAD_VERBS[parts[0]];
+      if (parts.length > 0 && Object.hasOwn(LEAD_VERBS, parts[0])) {
+        parts[0] = LEAD_VERBS[parts[0]];
+      }
       return parts.join("-");
     }
   }
