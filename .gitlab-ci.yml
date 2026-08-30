@@ -1,6 +1,6 @@
 include:
   - project: 'veith.dev/devops/gitlab-pipelines'
-    ref: v3.4.0
+    ref: v3.7.0
     file:
       - 'common/ChildPipeline.gitlab-ci.yml'
 
