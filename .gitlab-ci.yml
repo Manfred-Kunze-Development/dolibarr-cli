@@ -23,7 +23,7 @@ variables:
 # description fixtures, so there is nothing to gain from a matrix here.
 test:unit:
   stage: test
-  image: node:22-alpine
+  image: node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
   script:
     - npm ci
     - npm run typecheck
@@ -98,7 +98,7 @@ contract:next:
 
 build:npm:
   stage: build
-  image: node:22-alpine
+  image: node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
   script:
     - npm ci
     - npm run build
@@ -114,7 +114,7 @@ build:npm:
 
 publish:gitlab:
   stage: deploy
-  image: node:22-alpine
+  image: node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
   needs:
     - build:npm
   script:
@@ -139,7 +139,7 @@ publish:gitlab:
 
 publish:npmjs:
   stage: deploy
-  image: node:22-alpine
+  image: node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
   needs:
     - build:npm
   script:

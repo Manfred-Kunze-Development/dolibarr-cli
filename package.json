@@ -27,7 +27,7 @@
     "ora": "^8.2.0"
   },
   "devDependencies": {
-    "@types/node": "^22.19.17",
+    "@types/node": "^24.0.0",
     "typescript": "^5.9.3",
     "vitest": "^2.1.8"
   },
