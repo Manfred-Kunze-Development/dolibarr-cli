@@ -87,7 +87,7 @@ services:
       - db-previous:/var/lib/mysql
 
   dolibarr-previous:
-    image: dolibarr/dolibarr:22
+    image: dolibarr/dolibarr:24@sha256:69ec52e3b7ef54a37a8bd08feed9010270be0d04d86cefb3a569acd587379e6c
     profiles: [previous, all]
     depends_on:
       db-previous:
@@ -113,7 +113,7 @@ services:
       - db-current:/var/lib/mysql
 
   dolibarr-current:
-    image: dolibarr/dolibarr:23
+    image: dolibarr/dolibarr:24@sha256:69ec52e3b7ef54a37a8bd08feed9010270be0d04d86cefb3a569acd587379e6c
     profiles: [current, all]
     depends_on:
       db-current:
