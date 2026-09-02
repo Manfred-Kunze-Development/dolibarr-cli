@@ -20,7 +20,7 @@
     "extract:fields": "node scripts/extract-fields.mjs"
   },
   "dependencies": {
-    "chalk": "^5.6.2",
+    "chalk": "^6.0.0",
     "cli-table3": "^0.6.5",
     "commander": "^13.1.0",
     "conf": "^13.1.0",
