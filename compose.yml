@@ -79,7 +79,7 @@ x-doli-healthcheck: &doli-healthcheck
 services:
   # ----------------------------------------------------------------- previous (22)
   db-previous:
-    image: mariadb:lts
+    image: mariadb:lts@sha256:99c125f103f5d081ebbc9ffe064e63daf7f688ac33a5f7f29af2d7260a96debf
     profiles: [previous, all]
     environment: *db-env
     healthcheck: *db-healthcheck
@@ -105,7 +105,7 @@ services:
 
   # ------------------------------------------------------------------ current (23)
   db-current:
-    image: mariadb:lts
+    image: mariadb:lts@sha256:99c125f103f5d081ebbc9ffe064e63daf7f688ac33a5f7f29af2d7260a96debf
     profiles: [current, all]
     environment: *db-env
     healthcheck: *db-healthcheck
@@ -131,7 +131,7 @@ services:
 
   # ------------------------------------------------------- next (develop, 24 beta)
   db-next:
-    image: mariadb:lts
+    image: mariadb:lts@sha256:99c125f103f5d081ebbc9ffe064e63daf7f688ac33a5f7f29af2d7260a96debf
     profiles: [next, all]
     environment: *db-env
     healthcheck: *db-healthcheck
@@ -139,7 +139,7 @@ services:
       - db-next:/var/lib/mysql
 
   dolibarr-next:
-    image: dolibarr/dolibarr:develop
+    image: dolibarr/dolibarr:develop@sha256:9812acb4aadca12c0232e514ca84ea500cdb5e31b19ce00f50148d39196ce83a
     profiles: [next, all]
     depends_on:
       db-next:
